@@ -56,6 +56,11 @@ class VehicleCategoryCreate(BaseModel):
     seater_capacity: int = Field(..., ge=1, le=20)
     base_fare: float = Field(..., ge=0)
     per_km_rate: float = Field(..., ge=0)
+    hourly_rate: float = Field(default=280.0, ge=0)
+    platform_fee: float = Field(default=40.0, ge=0)
+    night_surcharge_percent: float = Field(default=15.0, ge=0, le=100)
+    gst_percent: float = Field(default=5.0, ge=0, le=100)
+    waiting_charge_per_min: float = Field(default=0.0, ge=0)
     example_vehicles: List[str] = Field(default_factory=list)
     features: List[str] = Field(default_factory=list)
     icon_name: str = Field(default="car-outline")
@@ -69,6 +74,11 @@ class VehicleCategoryUpdate(BaseModel):
     seater_capacity: Optional[int] = Field(None, ge=1, le=20)
     base_fare: Optional[float] = Field(None, ge=0)
     per_km_rate: Optional[float] = Field(None, ge=0)
+    hourly_rate: Optional[float] = Field(None, ge=0)
+    platform_fee: Optional[float] = Field(None, ge=0)
+    night_surcharge_percent: Optional[float] = Field(None, ge=0, le=100)
+    gst_percent: Optional[float] = Field(None, ge=0, le=100)
+    waiting_charge_per_min: Optional[float] = Field(None, ge=0)
     example_vehicles: Optional[List[str]] = None
     features: Optional[List[str]] = None
     icon_name: Optional[str] = None
@@ -216,6 +226,11 @@ class VehicleCategoryResponse(BaseModel):
     seater_capacity: int
     base_fare: float
     per_km_rate: float
+    hourly_rate: float = 280.0
+    platform_fee: float = 40.0
+    night_surcharge_percent: float = 15.0
+    gst_percent: float = 5.0
+    waiting_charge_per_min: float = 0.0
     example_vehicles: List[str]
     features: List[str]
     icon_name: Optional[str]

@@ -20,9 +20,14 @@ class VehicleCategoryConfig(Base):
     # Capacity
     seater_capacity = Column(Integer, default=4)
 
-    # Pricing
+    # Pricing — editable from admin; customer fare calc reads these live
     base_fare = Column(Float, default=80.0)
     per_km_rate = Column(Float, default=14.0)
+    hourly_rate = Column(Float, default=280.0)  # rental / per-hour
+    platform_fee = Column(Float, default=40.0)  # add-on per ride
+    night_surcharge_percent = Column(Float, default=15.0)
+    gst_percent = Column(Float, default=5.0)
+    waiting_charge_per_min = Column(Float, default=0.0)
 
     # Example vehicles (JSON array)
     example_vehicles = Column(JSON, default=list)  # ["WagonR", "Alto", "Tiago"]

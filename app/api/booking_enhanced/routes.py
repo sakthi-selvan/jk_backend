@@ -43,19 +43,19 @@ def calculate_fare(
     trip_type: str = "one_way",
     rental_hours: int = 1,
     surge_multiplier: float = 1.0,
+    waiting_minutes: float = 0.0,
 ) -> dict:
-    """Calculate detailed fare breakdown"""
-    platform_fee = 40.0
-    category_name = vehicle_category.name
+    """Calculate detailed fare breakdown from admin-configured category rates."""
+    platform_fee = float(getattr(vehicle_category, "platform_fee", None) or 40.0)
+    hourly_rate = float(getattr(vehicle_category, "hourly_rate", None) or 280.0)
+    night_pct = float(getattr(vehicle_category, "night_surcharge_percent", None) or 15.0) / 100.0
+    gst_pct = float(getattr(vehicle_category, "gst_percent", None) or 5.0) / 100.0
+    waiting_per_min = float(getattr(vehicle_category, "waiting_charge_per_min", None) or 0.0)
     surge_multiplier = max(1.0, float(surge_multiplier or 1.0))
 
     if trip_type == "rental":
-        hourly_rate = 280.0
-        if category_name not in ("mini", "bike"):
-            hourly_rate = hourly_rate * 1.2
-
-        base_fare = hourly_rate * rental_hours
-        free_km = 10.0 * rental_hours
+        base_fare = hourly_rate * max(1, int(rental_hours or 1))
+        free_km = 10.0 * max(1, int(rental_hours or 1))
         extra_km = max(0, distance_km - free_km)
         distance_fare = extra_km * vehicle_category.per_km_rate
     else:
@@ -66,10 +66,18 @@ def calculate_fare(
     base_fare = base_fare * surge_multiplier
     distance_fare = distance_fare * surge_multiplier
 
-    night_charges = (base_fare + distance_fare) * 0.15 if is_night else 0.0
+    night_charges = (base_fare + distance_fare) * night_pct if is_night else 0.0
+    waiting_charges = max(0.0, float(waiting_minutes or 0.0)) * waiting_per_min
 
-    subtotal = base_fare + distance_fare + platform_fee + toll_charges + night_charges
-    gst = subtotal * 0.05
+    subtotal = (
+        base_fare
+        + distance_fare
+        + platform_fee
+        + toll_charges
+        + night_charges
+        + waiting_charges
+    )
+    gst = subtotal * gst_pct
 
     total = subtotal + gst
 
@@ -80,7 +88,7 @@ def calculate_fare(
         "gst": round(gst, 2),
         "toll_charges": round(toll_charges, 2),
         "night_charges": round(night_charges, 2),
-        "waiting_charges": 0.0,
+        "waiting_charges": round(waiting_charges, 2),
         "total": round(total, 2),
         "surge_multiplier": surge_multiplier,
     }
