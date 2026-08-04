@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     CANCEL_FEE_STARTED: float = 50.0
 
     # CORS
-    ALLOWED_ORIGINS: str = '["http://localhost:3000","http://localhost:8081","http://localhost:19000","http://localhost:19006"]'
+    ALLOWED_ORIGINS: str = '["http://localhost:3000","http://localhost:5173","http://localhost:5174","http://localhost:8081","http://localhost:19000","http://localhost:19006","https://jktaxitamilnadu.com","https://admin.jktaxitamilnadu.com"]'
 
     @property
     def allowed_origins_list(self) -> List[str]:
