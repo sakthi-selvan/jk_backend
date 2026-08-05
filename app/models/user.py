@@ -1,6 +1,6 @@
 import uuid
 import random
-from sqlalchemy import Column, String, Boolean, DateTime
+from sqlalchemy import Column, String, Boolean, DateTime, Integer
 from sqlalchemy.dialects.postgresql import UUID, JSON
 from sqlalchemy.sql import func
 from app.db.base import Base
@@ -19,6 +19,8 @@ class User(Base):
     name = Column(String(100), nullable=False)
     email = Column(String(255), unique=True, index=True, nullable=True)
     password_hash = Column(String(255), nullable=True)
+    age = Column(Integer, nullable=True)
+    gender = Column(String(20), nullable=True)
     emergency_contact_name = Column(String(100), nullable=True)
     emergency_contact_phone = Column(String(15), nullable=True)
 

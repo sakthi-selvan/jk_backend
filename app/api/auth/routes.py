@@ -129,6 +129,10 @@ async def complete_profile_endpoint(
         if existing:
             raise HTTPException(status_code=400, detail="Email already in use")
         current_user.email = data.email
+    if data.age is not None:
+        current_user.age = data.age
+    if data.gender:
+        current_user.gender = data.gender
     if data.emergency_contact_name:
         current_user.emergency_contact_name = data.emergency_contact_name
     if data.emergency_contact_phone:

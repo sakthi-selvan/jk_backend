@@ -27,6 +27,10 @@ async def update_user_profile(
         current_user.name = user_update.name
     if user_update.email:
         current_user.email = user_update.email
+    if user_update.age is not None:
+        current_user.age = user_update.age
+    if user_update.gender is not None:
+        current_user.gender = user_update.gender
     if user_update.emergency_contact_name is not None:
         current_user.emergency_contact_name = user_update.emergency_contact_name
     if user_update.emergency_contact_phone is not None:

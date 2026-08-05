@@ -17,7 +17,6 @@ class VehicleCategory(str, Enum):
     MINI = "mini"
     SEDAN = "sedan"
     SUV = "suv"
-    PREMIUM = "premium"
 
 
 class RideStatus(str, Enum):

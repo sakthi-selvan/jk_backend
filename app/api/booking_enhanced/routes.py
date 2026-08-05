@@ -115,9 +115,10 @@ def cancellation_fee_for_status(status_value: str) -> float:
 
 @router.get("/vehicle-categories", response_model=List[VehicleCategoryResponse])
 async def get_vehicle_categories(db: Session = Depends(get_db)):
-    """Get all active vehicle categories"""
+    """Get all active vehicle categories (premium removed from product)."""
     categories = db.query(VehicleCategoryConfig).filter(
-        VehicleCategoryConfig.is_active == True
+        VehicleCategoryConfig.is_active == True,
+        VehicleCategoryConfig.name != "premium",
     ).order_by(VehicleCategoryConfig.display_order).all()
 
     return categories
@@ -146,6 +147,12 @@ async def calculate_fare_estimate(
         err = assert_service_area(lat, lng, label)
         if err:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err)
+
+    if vehicle_category == "premium":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Premium category is no longer available",
+        )
 
     category_config = db.query(VehicleCategoryConfig).filter(
         VehicleCategoryConfig.name == vehicle_category
@@ -452,7 +459,7 @@ async def get_nearby_drivers_count(
 async def get_nearby_drivers_locations(
     lat: float = Query(..., description="User latitude"),
     lng: float = Query(..., description="User longitude"),
-    vehicle_category: Optional[str] = Query(None, description="bike|auto|mini|sedan|suv|premium — omit for all"),
+    vehicle_category: Optional[str] = Query(None, description="bike|auto|mini|sedan|suv — omit for all"),
     women_only: bool = Query(False, description="Only women captains"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)

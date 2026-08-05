@@ -15,6 +15,8 @@ class VerifyOTP(BaseModel):
 class CompleteProfile(BaseModel):
     name: str = Field(..., min_length=2, max_length=100)
     email: Optional[EmailStr] = None
+    age: Optional[int] = Field(None, ge=13, le=120)
+    gender: Optional[str] = Field(None, max_length=20)
     emergency_contact_name: Optional[str] = Field(None, min_length=2, max_length=100)
     emergency_contact_phone: Optional[str] = Field(None, min_length=10, max_length=15)
 

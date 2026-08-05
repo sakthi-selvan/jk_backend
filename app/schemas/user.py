@@ -8,6 +8,8 @@ class UserBase(BaseModel):
     phone: str
     name: str
     email: Optional[EmailStr] = None
+    age: Optional[int] = None
+    gender: Optional[str] = None
     emergency_contact_name: Optional[str] = None
     emergency_contact_phone: Optional[str] = None
 
@@ -26,5 +28,7 @@ class UserResponse(UserBase):
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[EmailStr] = None
+    age: Optional[int] = None
+    gender: Optional[str] = None
     emergency_contact_name: Optional[str] = None
     emergency_contact_phone: Optional[str] = None

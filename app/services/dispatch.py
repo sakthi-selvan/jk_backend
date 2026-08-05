@@ -19,8 +19,7 @@ CATEGORY_MATCH: dict[str, Set[str]] = {
     "auto": {"auto", "auto_rickshaw", "rickshaw", "three_wheeler", "3wheeler"},
     "mini": {"mini", "hatchback", "car", "compact"},
     "sedan": {"sedan", "car"},
-    "suv": {"suv", "muv", "xl", "car"},
-    "premium": {"premium", "sedan", "suv", "luxury", "car"},
+    "suv": {"suv", "muv", "xl", "car", "premium", "luxury", "crysta"},
 }
 
 
@@ -71,17 +70,18 @@ def vehicle_matches(driver: Driver, vehicle_category: str) -> bool:
 
 
 def normalize_driver_category(vehicle_type: Optional[str]) -> str:
-    """Map free-text driver.vehicle_type → bike|auto|mini|sedan|suv|premium|other."""
+    """Map free-text driver.vehicle_type → bike|auto|mini|sedan|suv|other."""
     t = (vehicle_type or "").lower().replace(" ", "_").replace("-", "_")
     if not t:
         return "other"
+    if any(tok in t for tok in ("premium", "luxury", "crysta", "byd")):
+        return "suv"
     for cat, tokens in CATEGORY_MATCH.items():
         if t in tokens or any(tok in t for tok in tokens):
             return cat
     if "car" in t:
         return "mini"
     return "other"
-
 
 def declined_driver_ids(db: Session, ride_id: UUID) -> Set[UUID]:
     rows = db.query(RideCancellation.canceller_id).filter(
