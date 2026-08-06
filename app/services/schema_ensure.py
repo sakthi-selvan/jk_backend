@@ -171,6 +171,7 @@ def ensure_runtime_columns() -> None:
         "ALTER TABLE rides_enhanced ADD COLUMN IF NOT EXISTS offer_started_at TIMESTAMPTZ",
         "ALTER TABLE rides_enhanced ADD COLUMN IF NOT EXISTS dispatch_started_at TIMESTAMPTZ",
         "ALTER TABLE drivers ADD COLUMN IF NOT EXISTS gender VARCHAR(20)",
+        "ALTER TABLE drivers ADD COLUMN IF NOT EXISTS vehicle_image VARCHAR(500)",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS age INTEGER",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS gender VARCHAR(20)",
         "ALTER TABLE vehicle_categories ADD COLUMN IF NOT EXISTS hourly_rate DOUBLE PRECISION DEFAULT 280",

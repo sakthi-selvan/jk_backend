@@ -233,6 +233,9 @@ async def complete_driver_registration(
 
     license_url = save_driver_document_data_uri(driver.id, "license", data.license_document)
     aadhar_url = save_driver_document_data_uri(driver.id, "aadhar", data.aadhar_document)
+    vehicle_url = None
+    if data.vehicle_image:
+        vehicle_url = save_driver_document_data_uri(driver.id, "vehicle", data.vehicle_image)
 
     driver.name = data.name
     driver.email = data.email
@@ -242,6 +245,8 @@ async def complete_driver_registration(
         driver.gender = data.gender
     driver.license_document = license_url
     driver.aadhar_document = aadhar_url
+    if vehicle_url:
+        driver.vehicle_image = vehicle_url
     driver.is_verified = False
     driver.is_active = False
     db.commit()

@@ -32,6 +32,7 @@ def enrich_ride_response(ride: RideEnhanced, db: Session, current_driver: Driver
     ride_dict['driver_phone'] = None
     ride_dict['driver_vehicle_number'] = None
     ride_dict['driver_vehicle_type'] = None
+    ride_dict['driver_vehicle_image'] = None
     ride_dict['customer_name'] = None
     ride_dict['customer_phone'] = None
 
@@ -42,6 +43,7 @@ def enrich_ride_response(ride: RideEnhanced, db: Session, current_driver: Driver
             ride_dict['driver_phone'] = driver.phone
             ride_dict['driver_vehicle_number'] = driver.vehicle_number
             ride_dict['driver_vehicle_type'] = driver.vehicle_type
+            ride_dict['driver_vehicle_image'] = driver.vehicle_image
 
     if ride.user_id:
         customer = db.query(User).filter(User.id == ride.user_id).first()

@@ -37,6 +37,11 @@ async def update_driver_profile(
         current_driver.vehicle_type = driver_update.vehicle_type
     if driver_update.gender is not None:
         current_driver.gender = driver_update.gender.strip() or None
+    if driver_update.vehicle_image:
+        from app.services.document_storage import save_driver_document_data_uri
+        current_driver.vehicle_image = save_driver_document_data_uri(
+            current_driver.id, "vehicle", driver_update.vehicle_image
+        )
 
     db.commit()
     db.refresh(current_driver)

@@ -22,6 +22,7 @@ class Driver(Base):
     is_active = Column(Boolean, default=False)  # Account active only after admin approval
     license_document = Column(String(500), nullable=True)  # License photo URL/path
     aadhar_document = Column(String(500), nullable=True)  # Aadhar photo URL/path
+    vehicle_image = Column(String(500), nullable=True)  # Public vehicle photo for customers
     verification_notes = Column(String(500), nullable=True)  # Admin notes
     current_lat = Column(Float, nullable=True)
     current_lng = Column(Float, nullable=True)

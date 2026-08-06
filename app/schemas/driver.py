@@ -20,6 +20,7 @@ class DriverResponse(DriverBase):
     is_active: bool
     license_document: Optional[str] = None
     aadhar_document: Optional[str] = None
+    vehicle_image: Optional[str] = None
     verification_notes: Optional[str] = None
     created_at: datetime
 
@@ -33,6 +34,7 @@ class DriverUpdate(BaseModel):
     vehicle_number: Optional[str] = None
     vehicle_type: Optional[str] = None
     gender: Optional[str] = None
+    vehicle_image: Optional[str] = None  # data URI or /uploads path
 
 
 class DriverStatusUpdate(BaseModel):

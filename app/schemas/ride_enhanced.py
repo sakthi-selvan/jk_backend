@@ -204,6 +204,7 @@ class RideEnhancedResponse(BaseModel):
     driver_phone: Optional[str] = None
     driver_vehicle_number: Optional[str] = None
     driver_vehicle_type: Optional[str] = None
+    driver_vehicle_image: Optional[str] = None
 
     created_at: datetime
     updated_at: datetime

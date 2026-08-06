@@ -82,7 +82,12 @@ def save_driver_document_data_uri(driver_id: uuid.UUID | str, kind: str, data_ur
     folder = DRIVERS_DIR / str(driver_id)
     folder.mkdir(parents=True, exist_ok=True)
     ext = _EXT.get(mime, ".jpg")
-    safe_kind = "license" if "license" in kind else "aadhar" if "aadhar" in kind else kind
+    safe_kind = (
+        "license" if "license" in kind.lower()
+        else "aadhar" if "aadhar" in kind.lower()
+        else "vehicle" if "vehicle" in kind.lower()
+        else re.sub(r"[^a-z0-9_-]", "", kind.lower())[:32] or "doc"
+    )
     filename = f"{safe_kind}{ext}"
     path = folder / filename
     path.write_bytes(binary)

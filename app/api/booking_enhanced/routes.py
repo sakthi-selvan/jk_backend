@@ -336,6 +336,7 @@ def enrich_ride_with_driver(ride: RideEnhanced, db: Session) -> dict:
     ride_dict['driver_phone'] = None
     ride_dict['driver_vehicle_number'] = None
     ride_dict['driver_vehicle_type'] = None
+    ride_dict['driver_vehicle_image'] = None
 
     if ride.driver_id:
         driver = db.query(Driver).filter(Driver.id == ride.driver_id).first()
@@ -344,6 +345,7 @@ def enrich_ride_with_driver(ride: RideEnhanced, db: Session) -> dict:
             ride_dict['driver_phone'] = driver.phone
             ride_dict['driver_vehicle_number'] = driver.vehicle_number
             ride_dict['driver_vehicle_type'] = driver.vehicle_type
+            ride_dict['driver_vehicle_image'] = driver.vehicle_image
 
     return ride_dict
 

@@ -60,6 +60,7 @@ class DriverCompleteRegistration(BaseModel):
     gender: Optional[str] = Field(None, max_length=20)
     license_document: str  # data URI — saved to disk
     aadhar_document: str  # data URI — saved to disk
+    vehicle_image: Optional[str] = None  # public vehicle photo for customers
 
 
 # Admin Login
