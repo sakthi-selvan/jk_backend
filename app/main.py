@@ -122,11 +122,13 @@ async def startup():
     import app.models.ride_cancellation
     import app.models.rating
 
-    if settings.DEBUG:
-        Base.metadata.create_all(bind=engine)
+    # Safe if tables already exist — needed so empty DBs get vehicle_categories before seed.
+    Base.metadata.create_all(bind=engine)
     try:
-        from app.services.schema_ensure import ensure_runtime_columns
+        from app.services.schema_ensure import ensure_runtime_columns, ensure_default_vehicle_categories
         ensure_runtime_columns()
+        # Explicit seed: hardcoded defaults only when category rows are missing.
+        ensure_default_vehicle_categories()
     except Exception as exc:
         print(f"[startup] schema_ensure failed: {exc}")
 
