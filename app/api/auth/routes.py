@@ -1,20 +1,40 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from app.core.dependencies import get_db, get_current_user
+from app.core.dependencies import get_db, get_current_user, get_current_driver_allow_inactive
 from app.core.security import get_password_hash, verify_password, create_access_token, create_refresh_token, decode_token
 from app.core.config import settings
 from app.schemas.auth import (
     SendOTP, VerifyOTP, CompleteProfile,
     UserRegister, UserLogin, DriverRegister, DriverLogin,
+    DriverCompleteRegistration,
     AdminLogin, Token
 )
 from app.models.user import User
 from app.models.driver import Driver
 from app.models.admin import Admin
 from app.services import otp_store
+import secrets
+import uuid as uuid_mod
 
 router = APIRouter()
+
+
+def _otp_unusable_password_hash() -> str:
+    """Placeholder hash for OTP-only drivers (password login will fail)."""
+    return get_password_hash(secrets.token_urlsafe(32))
+
+
+def _driver_needs_registration(driver: Driver) -> bool:
+    return not driver.license_document or not driver.aadhar_document
+
+
+def _driver_account_status(driver: Driver) -> str:
+    if _driver_needs_registration(driver):
+        return "incomplete"
+    if not driver.is_active:
+        return "pending"
+    return "active"
 
 
 def _send_otp_sms(phone: str, otp: str) -> bool:
@@ -142,6 +162,97 @@ async def complete_profile_endpoint(
     return {"message": "Profile updated successfully"}
 
 
+# === Driver OTP auth ===
+
+@router.post("/driver/send-otp")
+async def send_driver_otp(data: SendOTP, db: Session = Depends(get_db)):
+    """Send OTP for driver login / registration (same store as customer OTP)."""
+    return await send_otp(data, db)
+
+
+@router.post("/driver/verify-otp")
+async def verify_driver_otp(data: VerifyOTP, db: Session = Depends(get_db)):
+    """Verify OTP for drivers. Creates an incomplete driver stub for new phones."""
+    phone = data.phone.strip()
+    otp = data.otp.strip()
+
+    ok, reason = otp_store.verify_and_consume(phone, otp)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=reason)
+
+    driver = db.query(Driver).filter(Driver.phone == phone).first()
+    is_new_driver = False
+
+    if not driver:
+        driver = Driver(
+            id=uuid_mod.uuid4(),
+            phone=phone,
+            name=phone,
+            password_hash=_otp_unusable_password_hash(),
+            is_verified=False,
+            is_active=False,
+        )
+        db.add(driver)
+        db.commit()
+        db.refresh(driver)
+        is_new_driver = True
+    else:
+        # Returning incomplete signup still counts as "new" for the app wizard
+        is_new_driver = _driver_needs_registration(driver)
+
+    account_status = _driver_account_status(driver)
+    access_token = create_access_token(data={"sub": str(driver.id), "role": "driver"})
+    refresh_token = create_refresh_token(data={"sub": str(driver.id), "role": "driver"})
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "is_new_driver": is_new_driver,
+        "is_active": bool(driver.is_active),
+        "account_status": account_status,
+    }
+
+
+@router.put("/driver/complete-registration")
+async def complete_driver_registration(
+    data: DriverCompleteRegistration,
+    driver: Driver = Depends(get_current_driver_allow_inactive),
+    db: Session = Depends(get_db),
+):
+    """Finish OTP signup: profile + vehicle + KYC docs. Stays pending until admin approval."""
+    from app.services.document_storage import save_driver_document_data_uri
+
+    if data.email:
+        existing = db.query(Driver).filter(Driver.email == data.email, Driver.id != driver.id).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Email already in use")
+
+    if not data.license_document or not data.aadhar_document:
+        raise HTTPException(status_code=400, detail="License and Aadhar documents are required")
+
+    license_url = save_driver_document_data_uri(driver.id, "license", data.license_document)
+    aadhar_url = save_driver_document_data_uri(driver.id, "aadhar", data.aadhar_document)
+
+    driver.name = data.name
+    driver.email = data.email
+    driver.vehicle_number = data.vehicle_number
+    driver.vehicle_type = data.vehicle_type
+    if data.gender:
+        driver.gender = data.gender
+    driver.license_document = license_url
+    driver.aadhar_document = aadhar_url
+    driver.is_verified = False
+    driver.is_active = False
+    db.commit()
+    db.refresh(driver)
+
+    return {
+        "message": "Registration submitted. Waiting for admin approval.",
+        "account_status": "pending",
+    }
+
+
 # === Legacy password-based endpoints (kept for driver/admin) ===
 
 @router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
@@ -196,7 +307,6 @@ async def login_user(user_data: UserLogin, db: Session = Depends(get_db)):
 async def register_driver(driver_data: DriverRegister, db: Session = Depends(get_db)):
     """Register new driver — KYC images are saved to disk; DB stores short URL paths."""
     from app.services.document_storage import save_driver_document_data_uri
-    import uuid as uuid_mod
 
     existing_driver = db.query(Driver).filter(Driver.phone == driver_data.phone).first()
     if existing_driver:

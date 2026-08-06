@@ -51,6 +51,17 @@ class DriverLogin(BaseModel):
     password: str = Field(..., min_length=6)
 
 
+class DriverCompleteRegistration(BaseModel):
+    """OTP-auth signup completion — no password."""
+    name: str = Field(..., min_length=2, max_length=100)
+    email: Optional[EmailStr] = None
+    vehicle_number: Optional[str] = None
+    vehicle_type: Optional[str] = None
+    gender: Optional[str] = Field(None, max_length=20)
+    license_document: str  # data URI — saved to disk
+    aadhar_document: str  # data URI — saved to disk
+
+
 # Admin Login
 class AdminLogin(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
