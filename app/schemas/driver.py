@@ -10,6 +10,7 @@ class DriverBase(BaseModel):
     email: Optional[EmailStr] = None
     vehicle_number: Optional[str] = None
     vehicle_type: Optional[str] = None
+    gender: Optional[str] = None
 
 
 class DriverResponse(DriverBase):
@@ -31,6 +32,7 @@ class DriverUpdate(BaseModel):
     email: Optional[EmailStr] = None
     vehicle_number: Optional[str] = None
     vehicle_type: Optional[str] = None
+    gender: Optional[str] = None
 
 
 class DriverStatusUpdate(BaseModel):

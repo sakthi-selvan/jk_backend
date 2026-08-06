@@ -35,6 +35,8 @@ async def update_driver_profile(
         current_driver.vehicle_number = driver_update.vehicle_number
     if driver_update.vehicle_type:
         current_driver.vehicle_type = driver_update.vehicle_type
+    if driver_update.gender is not None:
+        current_driver.gender = driver_update.gender.strip() or None
 
     db.commit()
     db.refresh(current_driver)
