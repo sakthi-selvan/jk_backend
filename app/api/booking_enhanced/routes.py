@@ -148,20 +148,21 @@ async def calculate_fare_estimate(
         if err:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err)
 
-    if vehicle_category == "premium":
+    if (vehicle_category or "").strip().lower() == "premium":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Premium category is no longer available",
         )
 
+    cat_name = (vehicle_category or "").strip().lower()
     category_config = db.query(VehicleCategoryConfig).filter(
-        VehicleCategoryConfig.name == vehicle_category
+        VehicleCategoryConfig.name == cat_name
     ).first()
 
     if not category_config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Vehicle category not found"
+            detail=f"Vehicle category '{cat_name}' not found. Restart API to seed default categories.",
         )
 
     route = get_driving_route(pickup_lat, pickup_lng, dropoff_lat, dropoff_lng)
@@ -184,6 +185,7 @@ async def calculate_fare_estimate(
 
 
 @router.post("/", response_model=RideEnhancedResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=RideEnhancedResponse, status_code=status.HTTP_201_CREATED, include_in_schema=False)
 async def create_booking_enhanced(
     booking: BookingCreate,
     current_user: User = Depends(get_current_user),
