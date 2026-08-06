@@ -1,7 +1,7 @@
 from typing import List, Optional
 from uuid import UUID
 from datetime import datetime, time
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 from app.core.dependencies import get_db, get_current_user, get_current_driver
 from app.schemas.ride_enhanced import (
@@ -351,12 +351,12 @@ def enrich_ride_with_driver(ride: RideEnhanced, db: Session) -> dict:
 RIDE_TIMEOUT_MINUTES = max(1, settings.OFFER_TTL_SECONDS // 60)
 
 
-@router.get("/active", response_model=RideEnhancedResponse)
+@router.get("/active", response_model=RideEnhancedResponse, responses={204: {"description": "No active ride"}})
 async def get_active_booking(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get user's active ride (uses dispatch TTL + scheduled rules — no raw created_at)."""
+    """Get user's active ride. Returns 204 when the user has no active booking (not an error)."""
     from app.services.dispatch import expire_stale_pending_rides
 
     expire_stale_pending_rides(db)
@@ -367,10 +367,7 @@ async def get_active_booking(
     ).order_by(RideEnhanced.created_at.desc()).first()
 
     if not active_ride:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No active ride found"
-        )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     return enrich_ride_with_driver(active_ride, db)
 
