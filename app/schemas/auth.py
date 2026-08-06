@@ -42,8 +42,8 @@ class DriverRegister(BaseModel):
     password: str = Field(..., min_length=6)
     vehicle_number: Optional[str] = None
     vehicle_type: Optional[str] = None
-    license_document: Optional[str] = None  # Base64 or URL
-    aadhar_document: Optional[str] = None  # Base64 or URL
+    license_document: Optional[str] = None  # data URI or URL — saved to disk on register
+    aadhar_document: Optional[str] = None  # data URI or URL — saved to disk on register
 
 
 class DriverLogin(BaseModel):

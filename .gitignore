@@ -21,3 +21,4 @@ htmlcov/
 # Local data / dumps
 *.sql.gz
 *.log
+uploads/

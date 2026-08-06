@@ -194,7 +194,10 @@ async def login_user(user_data: UserLogin, db: Session = Depends(get_db)):
 
 @router.post("/driver/register", response_model=Token, status_code=status.HTTP_201_CREATED)
 async def register_driver(driver_data: DriverRegister, db: Session = Depends(get_db)):
-    """Register new driver"""
+    """Register new driver — KYC images are saved to disk; DB stores short URL paths."""
+    from app.services.document_storage import save_driver_document_data_uri
+    import uuid as uuid_mod
+
     existing_driver = db.query(Driver).filter(Driver.phone == driver_data.phone).first()
     if existing_driver:
         raise HTTPException(status_code=400, detail="Phone number already registered")
@@ -204,17 +207,28 @@ async def register_driver(driver_data: DriverRegister, db: Session = Depends(get
         if existing_email:
             raise HTTPException(status_code=400, detail="Email already registered")
 
+    if not driver_data.license_document or not driver_data.aadhar_document:
+        raise HTTPException(
+            status_code=400,
+            detail="License and Aadhar documents are required",
+        )
+
+    driver_id = uuid_mod.uuid4()
+    license_url = save_driver_document_data_uri(driver_id, "license", driver_data.license_document)
+    aadhar_url = save_driver_document_data_uri(driver_id, "aadhar", driver_data.aadhar_document)
+
     new_driver = Driver(
+        id=driver_id,
         phone=driver_data.phone,
         name=driver_data.name,
         email=driver_data.email,
         password_hash=get_password_hash(driver_data.password),
         vehicle_number=driver_data.vehicle_number,
         vehicle_type=driver_data.vehicle_type,
-        license_document=driver_data.license_document,
-        aadhar_document=driver_data.aadhar_document,
+        license_document=license_url,
+        aadhar_document=aadhar_url,
         is_verified=False,
-        is_active=False
+        is_active=False,
     )
     db.add(new_driver)
     db.commit()

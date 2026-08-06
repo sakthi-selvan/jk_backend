@@ -169,8 +169,9 @@ async def unblock_driver(
         )
 
     driver.is_active = True
+    driver.is_verified = True
     db.commit()
-    return {"message": "Driver unblocked successfully"}
+    return {"message": "Driver approved successfully"}
 
 
 @router.get("/rides/active")

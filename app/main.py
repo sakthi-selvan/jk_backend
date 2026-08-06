@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import asyncio
 from app.core.config import settings
 from app.db.base import Base
@@ -16,6 +17,7 @@ from app.api.admin_enhanced import routes as admin_enhanced_routes
 from app.api.realtime import routes as realtime_routes
 from app.api.safety import routes as safety_routes
 from app.services.rate_limit import check_rate_limit
+from app.services.document_storage import UPLOAD_ROOT, ensure_upload_dirs
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -33,6 +35,10 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+# Driver KYC images (license / aadhar) — public read for admin preview
+ensure_upload_dirs()
+app.mount("/uploads", StaticFiles(directory=str(UPLOAD_ROOT)), name="uploads")
 
 _dispatch_task = None
 
