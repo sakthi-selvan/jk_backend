@@ -26,7 +26,7 @@ DEFAULT_VEHICLE_CATEGORIES: list[dict[str, Any]] = [
         "example_vehicles": ["Pulsar", "Apache", "Activa"],
         "features": ["1 Seater", "Fastest", "Helmet"],
         "icon_name": "bicycle-outline",
-        "display_order": 1,
+        "display_order": 5,
     },
     {
         "name": "auto",
@@ -43,7 +43,7 @@ DEFAULT_VEHICLE_CATEGORIES: list[dict[str, Any]] = [
         "example_vehicles": ["Bajaj RE", "Piaggio Ape"],
         "features": ["3 Seater", "Budget", "No bargaining"],
         "icon_name": "bus-outline",
-        "display_order": 2,
+        "display_order": 4,
     },
     {
         "name": "mini",
@@ -60,7 +60,7 @@ DEFAULT_VEHICLE_CATEGORIES: list[dict[str, Any]] = [
         "example_vehicles": ["WagonR", "Alto", "Tiago"],
         "features": ["AC", "4 Seater", "Budget Friendly"],
         "icon_name": "car-outline",
-        "display_order": 3,
+        "display_order": 1,
     },
     {
         "name": "sedan",
@@ -77,7 +77,7 @@ DEFAULT_VEHICLE_CATEGORIES: list[dict[str, Any]] = [
         "example_vehicles": ["Dzire", "Etios", "Aura"],
         "features": ["AC", "4 Seater", "Comfortable"],
         "icon_name": "car-sport-outline",
-        "display_order": 4,
+        "display_order": 2,
     },
     {
         "name": "suv",
@@ -94,7 +94,7 @@ DEFAULT_VEHICLE_CATEGORIES: list[dict[str, Any]] = [
         "example_vehicles": ["Ertiga", "Innova", "Marazzo"],
         "features": ["AC", "6-7 Seater", "Spacious"],
         "icon_name": "car-outline",
-        "display_order": 5,
+        "display_order": 3,
     },
 ]
 
@@ -131,6 +131,10 @@ def ensure_default_vehicle_categories() -> None:
                 if old_hourly is not None and current is not None and abs(float(current) - old_hourly) < 0.01:
                     existing[name].hourly_rate = cat["hourly_rate"]
                     inserted.append(f"{name}(hourly→market)")
+                # Keep fleet chip / booking list order: Mini → Sedan → SUV → Auto → Bike
+                if existing[name].display_order != cat["display_order"]:
+                    existing[name].display_order = cat["display_order"]
+                    inserted.append(f"{name}(order)")
                 continue
 
             db.add(
