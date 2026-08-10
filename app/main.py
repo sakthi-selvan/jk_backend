@@ -16,6 +16,7 @@ from app.api.user_enhanced import routes as user_enhanced_routes
 from app.api.admin_enhanced import routes as admin_enhanced_routes
 from app.api.realtime import routes as realtime_routes
 from app.api.safety import routes as safety_routes
+from app.api.geo import routes as geo_routes
 from app.services.rate_limit import check_rate_limit
 from app.services.document_storage import UPLOAD_ROOT, ensure_upload_dirs
 
@@ -171,6 +172,7 @@ app.include_router(user_enhanced_routes.router, prefix="/api/v2/user", tags=["Us
 app.include_router(admin_enhanced_routes.router, prefix="/api/v2/admin", tags=["Admin Enhanced"])
 app.include_router(realtime_routes.router, prefix="/api/realtime", tags=["Realtime"])
 app.include_router(safety_routes.router, prefix="/api/v2/safety", tags=["Safety"])
+app.include_router(geo_routes.router, prefix="/api/v2/geo", tags=["Geo"])
 
 @app.get("/")
 async def root():
