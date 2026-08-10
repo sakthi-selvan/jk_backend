@@ -59,6 +59,7 @@ def calculate_fare(
         extra_km = max(0, distance_km - free_km)
         distance_fare = extra_km * vehicle_category.per_km_rate
     else:
+        # Always compute one-way first; round_trip doubles the full fare below
         base_fare = vehicle_category.base_fare
         distance_fare = distance_km * vehicle_category.per_km_rate
 
@@ -80,6 +81,17 @@ def calculate_fare(
     gst = subtotal * gst_pct
 
     total = subtotal + gst
+
+    # Round trip = exact 2× one-way fare (outbound + return)
+    if trip_type == "round_trip":
+        base_fare *= 2.0
+        distance_fare *= 2.0
+        platform_fee *= 2.0
+        toll_charges = float(toll_charges or 0.0) * 2.0
+        night_charges *= 2.0
+        waiting_charges *= 2.0
+        gst *= 2.0
+        total *= 2.0
 
     return {
         "base_fare": round(base_fare, 2),
