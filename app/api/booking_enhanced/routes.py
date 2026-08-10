@@ -54,10 +54,30 @@ def calculate_fare(
     surge_multiplier = max(1.0, float(surge_multiplier or 1.0))
 
     if trip_type == "rental":
-        base_fare = hourly_rate * max(1, int(rental_hours or 1))
-        free_km = 10.0 * max(1, int(rental_hours or 1))
-        extra_km = max(0, distance_km - free_km)
-        distance_fare = extra_km * vehicle_category.per_km_rate
+        hours = max(1, int(rental_hours or 1))
+        # Market package (Uber/Ola style): ₹/hr · includes ~10 km per hour.
+        # hourly_rate is the GST-inclusive package price customers see.
+        package_total = hourly_rate * hours
+        gst_pct_safe = max(0.0, gst_pct)
+        if gst_pct_safe > 0:
+            subtotal_pkg = package_total / (1.0 + gst_pct_safe)
+            gst = package_total - subtotal_pkg
+        else:
+            subtotal_pkg = package_total
+            gst = 0.0
+        return {
+            "base_fare": round(subtotal_pkg, 2),
+            "distance_fare": 0.0,
+            "platform_fee": 0.0,
+            "gst": round(gst, 2),
+            "toll_charges": round(float(toll_charges or 0.0), 2),
+            "night_charges": 0.0,
+            "waiting_charges": 0.0,
+            "total": round(package_total + float(toll_charges or 0.0), 2),
+            "surge_multiplier": 1.0,
+            "rental_hours": hours,
+            "included_km": float(10 * hours),
+        }
     else:
         # Always compute one-way first; round_trip doubles the full fare below
         base_fare = vehicle_category.base_fare
@@ -262,8 +282,9 @@ async def create_booking_enhanced(
         route_source = route.source
         eta_minutes = max(1, int(round(route.duration_seconds / 60.0)))
     else:
-        # For rental, use estimated distance
-        distance_km = 10.0 * max(1, 1)  # base free km assumption
+        # For rental, use package included km (10 km / hour — Uber/Ola style)
+        hours = max(1, int(getattr(booking, "rental_hours", None) or 1))
+        distance_km = 10.0 * hours
 
     # Check if night time
     ride_time = booking.scheduled_datetime or datetime.now()
@@ -273,6 +294,7 @@ async def create_booking_enhanced(
     # Calculate fare breakdown
     fare_breakdown = calculate_fare(
         distance_km, category_config, is_night, trip_type=booking.trip_type.value,
+        rental_hours=max(1, int(getattr(booking, "rental_hours", None) or 1)),
         surge_multiplier=surge,
     )
 

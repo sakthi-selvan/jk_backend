@@ -98,12 +98,15 @@ class FareBreakdown(BaseModel):
     duration_minutes: float = 0.0
     route_source: Optional[str] = None
     surge_multiplier: float = 1.0
+    rental_hours: Optional[int] = None
+    included_km: Optional[float] = None
 
 
 class BookingCreate(BaseModel):
     # Trip Details
     trip_type: TripType = TripType.ONE_WAY
     vehicle_category: VehicleCategory = VehicleCategory.MINI
+    rental_hours: Optional[int] = Field(default=1, ge=1, le=12)
 
     # Locations
     pickup_location: str

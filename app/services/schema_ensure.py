@@ -18,7 +18,7 @@ DEFAULT_VEHICLE_CATEGORIES: list[dict[str, Any]] = [
         "seater_capacity": 1,
         "base_fare": 23.0,
         "per_km_rate": 13.0,
-        "hourly_rate": 150.0,
+        "hourly_rate": 129.0,
         "platform_fee": 20.0,
         "night_surcharge_percent": 15.0,
         "gst_percent": 5.0,
@@ -35,7 +35,7 @@ DEFAULT_VEHICLE_CATEGORIES: list[dict[str, Any]] = [
         "seater_capacity": 3,
         "base_fare": 80.0,
         "per_km_rate": 21.0,
-        "hourly_rate": 200.0,
+        "hourly_rate": 149.0,
         "platform_fee": 20.0,
         "night_surcharge_percent": 15.0,
         "gst_percent": 5.0,
@@ -52,7 +52,7 @@ DEFAULT_VEHICLE_CATEGORIES: list[dict[str, Any]] = [
         "seater_capacity": 4,
         "base_fare": 100.0,
         "per_km_rate": 20.0,
-        "hourly_rate": 280.0,
+        "hourly_rate": 189.0,
         "platform_fee": 40.0,
         "night_surcharge_percent": 15.0,
         "gst_percent": 5.0,
@@ -69,7 +69,7 @@ DEFAULT_VEHICLE_CATEGORIES: list[dict[str, Any]] = [
         "seater_capacity": 4,
         "base_fare": 100.0,
         "per_km_rate": 23.0,
-        "hourly_rate": 336.0,
+        "hourly_rate": 249.0,
         "platform_fee": 40.0,
         "night_surcharge_percent": 15.0,
         "gst_percent": 5.0,
@@ -86,7 +86,7 @@ DEFAULT_VEHICLE_CATEGORIES: list[dict[str, Any]] = [
         "seater_capacity": 7,
         "base_fare": 150.0,
         "per_km_rate": 26.0,
-        "hourly_rate": 336.0,
+        "hourly_rate": 399.0,
         "platform_fee": 40.0,
         "night_surcharge_percent": 15.0,
         "gst_percent": 5.0,
@@ -119,6 +119,18 @@ def ensure_default_vehicle_categories() -> None:
                 if not existing[name].is_active:
                     existing[name].is_active = True
                     inserted.append(f"{name}(reactivated)")
+                # Soft-align rental packages to India market (Uber/Ola-style) when still on old seeds
+                old_hourly = {
+                    "bike": 150.0,
+                    "auto": 200.0,
+                    "mini": 280.0,
+                    "sedan": 336.0,
+                    "suv": 336.0,
+                }.get(name)
+                current = existing[name].hourly_rate
+                if old_hourly is not None and current is not None and abs(float(current) - old_hourly) < 0.01:
+                    existing[name].hourly_rate = cat["hourly_rate"]
+                    inserted.append(f"{name}(hourly→market)")
                 continue
 
             db.add(
