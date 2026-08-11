@@ -689,11 +689,11 @@ async def get_driver_ride_history(
     current_driver: Driver = Depends(get_current_driver),
     db: Session = Depends(get_db)
 ):
-    """Get driver's ride history"""
+    """Get driver's ride history (completed + cancelled) with full ride details"""
     rides = db.query(RideEnhanced).filter(
         RideEnhanced.driver_id == current_driver.id,
-        RideEnhanced.status == "completed"
-    ).order_by(RideEnhanced.created_at.desc()).all()
+        RideEnhanced.status.in_(["completed", "cancelled"]),
+    ).order_by(RideEnhanced.created_at.desc()).limit(100).all()
 
     return [enrich_ride_response(ride, db, current_driver) for ride in rides]
 
