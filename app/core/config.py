@@ -58,15 +58,15 @@ class Settings(BaseSettings):
     # Dispatch — sequential exclusive offers (one driver at a time)
     SEQUENTIAL_DISPATCH: bool = True
     OFFER_TTL_SECONDS: int = 300  # overall search timeout
-    DRIVER_OFFER_SECONDS: int = 25  # exclusive window per driver
-    STALE_GPS_SECONDS: int = 120
+    DRIVER_OFFER_SECONDS: int = 40  # exclusive window per driver (time to see + accept)
+    STALE_GPS_SECONDS: int = 180
     ENFORCE_VEHICLE_MATCH: bool = True
     REQUIRE_DRIVER_DOCS: bool = False
     REQUIRE_AADHAR_DOCUMENT: bool = False
     REQUIRE_DRIVER_VERIFIED: bool = True
     SCHEDULED_RELEASE_MINUTES: int = 30
     SCHEDULED_LATE_GRACE_MINUTES: int = 15
-    DISPATCH_SWEEP_SECONDS: int = 10
+    DISPATCH_SWEEP_SECONDS: int = 3  # retry waiting rides / advance offers quickly
     MAX_PICKUP_ETA_MINUTES: float = 30.0
 
     # Pricing / cancellations

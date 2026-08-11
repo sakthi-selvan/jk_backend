@@ -156,6 +156,37 @@ async def update_driver_location(
         if hub.remember_location(str(active_ride.id), payload):
             await hub.publish_ride(str(active_ride.id), "driver_location", payload)
             await hub.publish_user(str(active_ride.user_id), "driver_location", payload)
+    elif current_driver.is_online:
+        # Driver just refreshed GPS while idle — try to claim a waiting ride immediately
+        # instead of waiting for the background sweep (was up to 10s).
+        from app.services.dispatch import (
+            assign_next_offer,
+            emit_ride_offer,
+            scheduled_ready_for_dispatch,
+            begin_dispatch,
+        )
+        waiting = (
+            db.query(RideEnhanced)
+            .filter(
+                RideEnhanced.status == "pending",
+                RideEnhanced.driver_id.is_(None),
+                RideEnhanced.offered_driver_id.is_(None),
+            )
+            .order_by(RideEnhanced.created_at.asc())
+            .limit(5)
+            .all()
+        )
+        for ride in waiting:
+            if not scheduled_ready_for_dispatch(ride):
+                continue
+            if not getattr(ride, "dispatch_started_at", None):
+                begin_dispatch(ride)
+            offered = assign_next_offer(db, ride)
+            if offered:
+                db.commit()
+                db.refresh(ride)
+                await emit_ride_offer(ride, offered)
+                break
 
     return {"status": "ok", "sequence": location.sequence}
 
@@ -191,7 +222,10 @@ async def get_available_rides(
             detail="Driver must be online to see available rides"
         )
 
-    if not driver_location_fresh(current_driver):
+    gps_fresh = driver_location_fresh(current_driver)
+    # Exclusive offers must still be visible even if GPS is briefly stale.
+    # Non-sequential mode still requires fresh GPS to browse open rides.
+    if not settings.SEQUENTIAL_DISPATCH and not gps_fresh:
         return []
 
     if settings.SEQUENTIAL_DISPATCH:
@@ -227,73 +261,95 @@ async def get_available_rides(
         if not vehicle_matches(current_driver, ride.vehicle_category):
             continue
 
-        distance_to_pickup = haversine_km(
-            current_driver.current_lat,
-            current_driver.current_lng,
-            ride.pickup_lat,
-            ride.pickup_lng
-        )
-        eta_to_pickup = estimate_pickup_eta_minutes(distance_to_pickup)
+        exclusive = settings.SEQUENTIAL_DISPATCH and offer_is_for_driver(ride, current_driver.id)
 
-        if eta_to_pickup <= MAX_ETA_MINUTES:
-            offer_remaining = (
-                driver_offer_remaining_seconds(ride)
-                if settings.SEQUENTIAL_DISPATCH
-                else offer_remaining_seconds(ride)
+        # Prefer live driver coords; fall back to ride trip distance for exclusive offers
+        # so a brief GPS glitch does not hide the Accept card.
+        distance_to_pickup = None
+        eta_to_pickup = None
+        if (
+            current_driver.current_lat is not None
+            and current_driver.current_lng is not None
+            and ride.pickup_lat is not None
+            and ride.pickup_lng is not None
+        ):
+            distance_to_pickup = haversine_km(
+                current_driver.current_lat,
+                current_driver.current_lng,
+                ride.pickup_lat,
+                ride.pickup_lng
             )
+            eta_to_pickup = estimate_pickup_eta_minutes(distance_to_pickup)
 
-            ride_dict = {
-                "id": str(ride.id),
-                "user_id": str(ride.user_id),
-                "driver_id": str(ride.driver_id) if ride.driver_id else None,
-                "trip_type": ride.trip_type,
-                "vehicle_category": ride.vehicle_category,
-                "pickup_location": ride.pickup_location,
-                "dropoff_location": ride.dropoff_location,
-                "pickup_lat": ride.pickup_lat,
-                "pickup_lng": ride.pickup_lng,
-                "dropoff_lat": ride.dropoff_lat,
-                "dropoff_lng": ride.dropoff_lng,
-                "stops": ride.stops or [],
-                "is_scheduled": ride.is_scheduled,
-                "scheduled_datetime": ride.scheduled_datetime,
-                "booking_for_self": ride.booking_for_self,
-                "passenger_name": ride.passenger_name,
-                "passenger_phone": ride.passenger_phone,
-                "passenger_notes": ride.passenger_notes,
-                "preferences": ride.preferences or {},
-                "driver_notes": ride.driver_notes,
-                "ride_otp": None,
-                "otp_verified": ride.otp_verified,
-                "status": ride.status,
-                "rejection_count": ride.rejection_count,
-                "cancellation_reason": ride.cancellation_reason,
-                "base_fare": ride.base_fare,
-                "distance_fare": ride.distance_fare,
-                "platform_fee": ride.platform_fee,
-                "gst": ride.gst,
-                "toll_charges": ride.toll_charges,
-                "night_charges": ride.night_charges,
-                "waiting_charges": ride.waiting_charges,
-                "fare": ride.fare,
-                "payment_status": ride.payment_status,
-                "payment_method": ride.payment_method,
-                "transaction_id": ride.transaction_id,
-                "distance_km": round(distance_to_pickup, 2),
-                "eta_minutes": round(eta_to_pickup),
-                "trip_distance_km": ride.distance_km,
-                "route_source": getattr(ride, "route_source", None),
-                "offer_ttl_seconds": settings.DRIVER_OFFER_SECONDS if settings.SEQUENTIAL_DISPATCH else settings.OFFER_TTL_SECONDS,
-                "offer_remaining_seconds": offer_remaining,
-                "search_remaining_seconds": offer_remaining_seconds(ride),
-                "driver_name": None,
-                "driver_phone": None,
-                "driver_vehicle_number": None,
-                "driver_vehicle_type": None,
-                "created_at": ride.created_at,
-                "updated_at": ride.updated_at,
-            }
-            nearby_rides.append(ride_dict)
+        if not exclusive:
+            if distance_to_pickup is None or eta_to_pickup is None:
+                continue
+            if eta_to_pickup > MAX_ETA_MINUTES:
+                continue
+        else:
+            if distance_to_pickup is None:
+                distance_to_pickup = float(ride.distance_km or 0)
+            if eta_to_pickup is None:
+                eta_to_pickup = float(ride.eta_minutes or 0)
+
+        offer_remaining = (
+            driver_offer_remaining_seconds(ride)
+            if settings.SEQUENTIAL_DISPATCH
+            else offer_remaining_seconds(ride)
+        )
+
+        ride_dict = {
+            "id": str(ride.id),
+            "user_id": str(ride.user_id),
+            "driver_id": str(ride.driver_id) if ride.driver_id else None,
+            "trip_type": ride.trip_type,
+            "vehicle_category": ride.vehicle_category,
+            "pickup_location": ride.pickup_location,
+            "dropoff_location": ride.dropoff_location,
+            "pickup_lat": ride.pickup_lat,
+            "pickup_lng": ride.pickup_lng,
+            "dropoff_lat": ride.dropoff_lat,
+            "dropoff_lng": ride.dropoff_lng,
+            "stops": ride.stops or [],
+            "is_scheduled": ride.is_scheduled,
+            "scheduled_datetime": ride.scheduled_datetime,
+            "booking_for_self": ride.booking_for_self,
+            "passenger_name": ride.passenger_name,
+            "passenger_phone": ride.passenger_phone,
+            "passenger_notes": ride.passenger_notes,
+            "preferences": ride.preferences or {},
+            "driver_notes": ride.driver_notes,
+            "ride_otp": None,
+            "otp_verified": ride.otp_verified,
+            "status": ride.status,
+            "rejection_count": ride.rejection_count,
+            "cancellation_reason": ride.cancellation_reason,
+            "base_fare": ride.base_fare,
+            "distance_fare": ride.distance_fare,
+            "platform_fee": ride.platform_fee,
+            "gst": ride.gst,
+            "toll_charges": ride.toll_charges,
+            "night_charges": ride.night_charges,
+            "waiting_charges": ride.waiting_charges,
+            "fare": ride.fare,
+            "payment_status": ride.payment_status,
+            "payment_method": ride.payment_method,
+            "transaction_id": ride.transaction_id,
+            "distance_km": round(distance_to_pickup, 2),
+            "eta_minutes": round(eta_to_pickup),
+            "trip_distance_km": ride.distance_km,
+            "route_source": getattr(ride, "route_source", None),
+            "offer_ttl_seconds": settings.DRIVER_OFFER_SECONDS if settings.SEQUENTIAL_DISPATCH else settings.OFFER_TTL_SECONDS,
+            "offer_remaining_seconds": offer_remaining,
+            "search_remaining_seconds": offer_remaining_seconds(ride),
+            "driver_name": None,
+            "driver_phone": None,
+            "driver_vehicle_number": None,
+            "driver_vehicle_type": None,
+            "created_at": ride.created_at,
+            "updated_at": ride.updated_at,
+        }
+        nearby_rides.append(ride_dict)
 
     nearby_rides.sort(key=lambda r: r["distance_km"])
     return nearby_rides[:10]
@@ -709,13 +765,22 @@ async def get_driver_ride_details(
     current_driver: Driver = Depends(get_current_driver),
     db: Session = Depends(get_db),
 ):
-    """Get a single ride assigned to this driver (active, completed, or cancelled)."""
-    ride = db.query(RideEnhanced).filter(
-        RideEnhanced.id == ride_id,
-        RideEnhanced.driver_id == current_driver.id,
-    ).first()
+    """Get a ride assigned to this driver, or a pending exclusive offer for them."""
+    ride = db.query(RideEnhanced).filter(RideEnhanced.id == ride_id).first()
 
     if not ride:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ride not found",
+        )
+
+    is_assignee = ride.driver_id == current_driver.id
+    is_offer = (
+        ride.status == "pending"
+        and ride.driver_id is None
+        and ride.offered_driver_id == current_driver.id
+    )
+    if not is_assignee and not is_offer:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Ride not found",

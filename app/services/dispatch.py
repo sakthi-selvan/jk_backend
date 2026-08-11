@@ -278,18 +278,63 @@ def record_driver_pass(db: Session, ride: RideEnhanced, driver_id: UUID, reason:
 
 
 async def emit_ride_offer(ride: RideEnhanced, driver: Driver) -> None:
+    """Push a full offer payload so the driver app can show Accept UI immediately."""
+    from app.services.routing import estimate_pickup_eta_minutes, haversine_km
+
+    distance_to_pickup = None
+    eta_to_pickup = None
+    if (
+        driver.current_lat is not None
+        and driver.current_lng is not None
+        and ride.pickup_lat is not None
+        and ride.pickup_lng is not None
+    ):
+        distance_to_pickup = haversine_km(
+            driver.current_lat,
+            driver.current_lng,
+            ride.pickup_lat,
+            ride.pickup_lng,
+        )
+        eta_to_pickup = estimate_pickup_eta_minutes(distance_to_pickup)
+
     data = {
         "ride_id": str(ride.id),
+        "id": str(ride.id),
         "status": "pending",
         "user_id": str(ride.user_id),
         "offered_driver_id": str(driver.id),
+        "trip_type": ride.trip_type,
         "vehicle_category": ride.vehicle_category,
+        "pickup_location": ride.pickup_location,
+        "dropoff_location": ride.dropoff_location,
+        "pickup_lat": ride.pickup_lat,
+        "pickup_lng": ride.pickup_lng,
+        "dropoff_lat": ride.dropoff_lat,
+        "dropoff_lng": ride.dropoff_lng,
+        "stops": ride.stops or [],
+        "is_scheduled": bool(ride.is_scheduled),
+        "booking_for_self": ride.booking_for_self,
+        "passenger_name": ride.passenger_name,
+        "passenger_phone": ride.passenger_phone,
+        "preferences": ride.preferences or {},
+        "fare": ride.fare,
+        "base_fare": ride.base_fare,
+        "distance_fare": ride.distance_fare,
+        "platform_fee": ride.platform_fee,
+        "gst": ride.gst,
+        "toll_charges": ride.toll_charges,
+        "night_charges": ride.night_charges,
+        "waiting_charges": ride.waiting_charges,
+        "payment_method": ride.payment_method,
+        "payment_status": ride.payment_status,
+        "trip_distance_km": ride.distance_km,
+        "distance_km": round(distance_to_pickup, 2) if distance_to_pickup is not None else ride.distance_km,
+        "eta_minutes": round(eta_to_pickup) if eta_to_pickup is not None else ride.eta_minutes,
+        "otp_verified": False,
         "offer_remaining_seconds": driver_offer_remaining_seconds(ride),
         "driver_offer_seconds": settings.DRIVER_OFFER_SECONDS,
         "search_remaining_seconds": search_remaining_seconds(ride),
-        "fare": ride.fare,
-        "pickup_location": ride.pickup_location,
-        "dropoff_location": ride.dropoff_location,
+        "offer_ttl_seconds": settings.DRIVER_OFFER_SECONDS,
     }
     await hub.publish_driver(str(driver.id), "ride_offer", data)
     await hub.publish_ride(str(ride.id), "ride_offer", data)
