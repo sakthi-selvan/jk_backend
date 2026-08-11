@@ -698,6 +698,27 @@ async def get_driver_ride_history(
     return [enrich_ride_response(ride, db, current_driver) for ride in rides]
 
 
+@router.get("/rides/{ride_id}", response_model=RideEnhancedResponse)
+async def get_driver_ride_details(
+    ride_id: UUID,
+    current_driver: Driver = Depends(get_current_driver),
+    db: Session = Depends(get_db),
+):
+    """Get a single ride assigned to this driver (active, completed, or cancelled)."""
+    ride = db.query(RideEnhanced).filter(
+        RideEnhanced.id == ride_id,
+        RideEnhanced.driver_id == current_driver.id,
+    ).first()
+
+    if not ride:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ride not found",
+        )
+
+    return enrich_ride_response(ride, db, current_driver)
+
+
 @router.get("/earnings")
 async def get_driver_earnings(
     current_driver: Driver = Depends(get_current_driver),
