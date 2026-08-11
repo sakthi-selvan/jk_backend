@@ -41,8 +41,10 @@ class Settings(BaseSettings):
     # Force-complete is disabled unless explicitly enabled (ops/debug only)
     ALLOW_FORCE_COMPLETE: bool = False
 
-    # Mapbox (server-side Directions for fare/ETA). Public token with Directions scope.
+    # Mapbox (server-side Directions for fare/ETA). Prefer a pk. public token.
     MAPBOX_ACCESS_TOKEN: Optional[str] = None
+    # Optional dedicated public token for mobile MapViews (falls back to MAPBOX_ACCESS_TOKEN if pk.).
+    MAPBOX_PUBLIC_TOKEN: Optional[str] = None
     MAPBOX_ROUTING_PROFILE: str = "driving-traffic"
     MIN_FARE_DISTANCE_KM: float = 1.0
     FALLBACK_SPEED_KMH: float = 30.0
@@ -72,6 +74,14 @@ class Settings(BaseSettings):
 
     # CORS
     ALLOWED_ORIGINS: str = '["http://localhost:3000","http://localhost:5173","http://localhost:5174","http://localhost:8081","http://localhost:19000","http://localhost:19006","https://jktaxitamilnadu.com","https://admin.jktaxitamilnadu.com"]'
+
+    def client_mapbox_token(self) -> Optional[str]:
+        """Public pk. token safe to send to apps after login (never return sk. secrets)."""
+        for candidate in (self.MAPBOX_PUBLIC_TOKEN, self.MAPBOX_ACCESS_TOKEN):
+            token = (candidate or "").strip()
+            if token.startswith("pk."):
+                return token
+        return None
 
     @property
     def allowed_origins_list(self) -> List[str]:

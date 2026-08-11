@@ -172,3 +172,28 @@ async def get_current_admin(
         )
 
     return admin
+
+
+async def get_current_mobile_actor(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> dict:
+    """Authenticated customer or driver (for geo/map token endpoints)."""
+    token = credentials.credentials
+    payload = decode_token(token)
+
+    if not payload or payload.get("type") != "access":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    subject = payload.get("sub")
+    role = payload.get("role")
+    if not subject or role not in ("user", "driver"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+        )
+
+    return {"id": str(subject), "role": role}

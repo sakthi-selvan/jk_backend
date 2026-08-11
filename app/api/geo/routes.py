@@ -10,9 +10,10 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.config import settings
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_mobile_actor, get_current_user
 from app.models.user import User
 from app.services.rate_limit import check_rate_limit
+from app.services.routing import get_driving_route
 
 router = APIRouter()
 
@@ -186,3 +187,47 @@ async def reverse_geocode(
         raise HTTPException(status_code=502, detail=f"Reverse geocode failed: {exc}") from exc
 
     return {"result": None, "source": "none"}
+
+
+@router.get("/mapbox-token")
+async def get_mapbox_client_token(
+    actor: dict = Depends(get_current_mobile_actor),
+):
+    """
+    Return a public Mapbox token (pk.) after login so preview APKs can load tiles
+    and client Directions without baking EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN into the binary.
+    """
+    ok, msg = check_rate_limit(f"geo:token:{actor['role']}:{actor['id']}", limit=20, window_seconds=60)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=msg)
+
+    token = settings.client_mapbox_token()
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Mapbox public token is not configured on the server (need a pk. token)",
+        )
+    return {"access_token": token, "style_url": "mapbox://styles/mapbox/streets-v12"}
+
+
+@router.get("/directions")
+async def get_directions(
+    from_lat: float = Query(..., ge=-90, le=90),
+    from_lng: float = Query(..., ge=-180, le=180),
+    to_lat: float = Query(..., ge=-90, le=90),
+    to_lng: float = Query(..., ge=-180, le=180),
+    profile: Optional[str] = Query(None, description="driving-traffic | driving"),
+    actor: dict = Depends(get_current_mobile_actor),
+):
+    """Road route for live maps (searching / navigation). Uses server Mapbox token."""
+    ok, msg = check_rate_limit(f"geo:directions:{actor['role']}:{actor['id']}", limit=60, window_seconds=60)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=msg)
+
+    route = get_driving_route(from_lat, from_lng, to_lat, to_lng, profile=profile)
+    return {
+        "coordinates": route.coordinates,
+        "distance_m": round(route.distance_km * 1000.0, 1),
+        "duration_s": route.duration_seconds,
+        "source": route.source,
+    }

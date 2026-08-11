@@ -49,42 +49,51 @@ def get_driving_route(
     profile: Optional[str] = None,
 ) -> RouteResult:
     """Return road-network route when Mapbox token is set; else haversine fallback."""
-    profile = profile or settings.MAPBOX_ROUTING_PROFILE
     token = settings.MAPBOX_ACCESS_TOKEN
     if not token:
         return _haversine_route(pickup_lat, pickup_lng, dropoff_lat, dropoff_lng)
 
+    profiles: List[str] = []
+    primary = profile or settings.MAPBOX_ROUTING_PROFILE
+    profiles.append(primary)
+    if primary != "driving":
+        profiles.append("driving")
+
     coords = f"{pickup_lng},{pickup_lat};{dropoff_lng},{dropoff_lat}"
-    qs = urllib.parse.urlencode({
-        "geometries": "geojson",
-        "overview": "full",
-        "access_token": token,
-    })
-    url = f"https://api.mapbox.com/directions/v5/mapbox/{profile}/{coords}?{qs}"
+    for prof in profiles:
+        qs = urllib.parse.urlencode({
+            "geometries": "geojson",
+            "overview": "full",
+            "access_token": token,
+        })
+        url = f"https://api.mapbox.com/directions/v5/mapbox/{prof}/{coords}?{qs}"
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "jk-taxi-backend/2"})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError, ValueError):
+            continue
 
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "jk-taxi-backend/2"})
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError, ValueError):
-        return _haversine_route(pickup_lat, pickup_lng, dropoff_lat, dropoff_lng)
+        routes = payload.get("routes") or []
+        if not routes:
+            continue
 
-    routes = payload.get("routes") or []
-    if not routes:
-        return _haversine_route(pickup_lat, pickup_lng, dropoff_lat, dropoff_lng)
+        route = routes[0]
+        distance_m = float(route.get("distance") or 0)
+        duration_s = float(route.get("duration") or 0)
+        geometry = (route.get("geometry") or {}).get("coordinates") or []
+        if len(geometry) < 2:
+            continue
+        distance_km = max(settings.MIN_FARE_DISTANCE_KM, distance_m / 1000.0)
 
-    route = routes[0]
-    distance_m = float(route.get("distance") or 0)
-    duration_s = float(route.get("duration") or 0)
-    geometry = (route.get("geometry") or {}).get("coordinates") or []
-    distance_km = max(settings.MIN_FARE_DISTANCE_KM, distance_m / 1000.0)
+        return RouteResult(
+            distance_km=round(distance_km, 3),
+            duration_seconds=round(duration_s, 1),
+            coordinates=geometry,
+            source="mapbox",
+        )
 
-    return RouteResult(
-        distance_km=round(distance_km, 3),
-        duration_seconds=round(duration_s, 1),
-        coordinates=geometry,
-        source="mapbox",
-    )
+    return _haversine_route(pickup_lat, pickup_lng, dropoff_lat, dropoff_lng)
 
 
 def estimate_pickup_eta_minutes(distance_km: float) -> float:
