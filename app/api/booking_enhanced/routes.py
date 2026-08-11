@@ -13,6 +13,7 @@ from app.models.vehicle_category import VehicleCategoryConfig
 from app.models.user import User
 from app.models.driver import Driver
 from app.services.realtime import hub
+from app.services.driver_stats import get_driver_public_stats
 from app.core.config import settings
 
 router = APIRouter()
@@ -371,6 +372,9 @@ def enrich_ride_with_driver(ride: RideEnhanced, db: Session) -> dict:
     ride_dict['driver_vehicle_number'] = None
     ride_dict['driver_vehicle_type'] = None
     ride_dict['driver_vehicle_image'] = None
+    ride_dict['driver_total_rides'] = 0
+    ride_dict['driver_average_rating'] = None
+    ride_dict['driver_rating_count'] = 0
 
     if ride.driver_id:
         driver = db.query(Driver).filter(Driver.id == ride.driver_id).first()
@@ -380,6 +384,7 @@ def enrich_ride_with_driver(ride: RideEnhanced, db: Session) -> dict:
             ride_dict['driver_vehicle_number'] = driver.vehicle_number
             ride_dict['driver_vehicle_type'] = driver.vehicle_type
             ride_dict['driver_vehicle_image'] = driver.vehicle_image
+            ride_dict.update(get_driver_public_stats(db, driver.id))
 
     return ride_dict
 

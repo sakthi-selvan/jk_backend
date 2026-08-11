@@ -7,8 +7,19 @@ from app.schemas.driver import DriverResponse, DriverUpdate, DriverStatusUpdate
 from app.schemas.booking import BookingResponse
 from app.models.driver import Driver
 from app.models.ride import Ride, RideStatus
+from app.services.driver_stats import get_driver_public_stats
 
 router = APIRouter()
+
+
+def enrich_driver_response(driver: Driver, db: Session) -> dict:
+    """Attach public trip/rating stats to a driver profile payload."""
+    data = {c.name: getattr(driver, c.name) for c in driver.__table__.columns}
+    stats = get_driver_public_stats(db, driver.id)
+    data["total_rides"] = stats["driver_total_rides"]
+    data["average_rating"] = stats["driver_average_rating"]
+    data["rating_count"] = stats["driver_rating_count"]
+    return data
 
 
 @router.get("/profile", response_model=DriverResponse)
@@ -17,7 +28,7 @@ async def get_driver_profile(
     db: Session = Depends(get_db)
 ):
     """Get driver profile"""
-    return current_driver
+    return enrich_driver_response(current_driver, db)
 
 
 @router.put("/profile", response_model=DriverResponse)
@@ -45,7 +56,7 @@ async def update_driver_profile(
 
     db.commit()
     db.refresh(current_driver)
-    return current_driver
+    return enrich_driver_response(current_driver, db)
 
 
 @router.put("/status", response_model=DriverResponse)
@@ -72,7 +83,7 @@ async def update_driver_status(
     current_driver.is_online = status_update.is_online
     db.commit()
     db.refresh(current_driver)
-    return current_driver
+    return enrich_driver_response(current_driver, db)
 
 
 @router.get("/rides/available", response_model=List[BookingResponse])

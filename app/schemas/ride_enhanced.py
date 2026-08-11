@@ -208,6 +208,9 @@ class RideEnhancedResponse(BaseModel):
     driver_vehicle_number: Optional[str] = None
     driver_vehicle_type: Optional[str] = None
     driver_vehicle_image: Optional[str] = None
+    driver_total_rides: Optional[int] = None
+    driver_average_rating: Optional[float] = None
+    driver_rating_count: Optional[int] = None
 
     created_at: datetime
     updated_at: datetime

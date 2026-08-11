@@ -23,6 +23,9 @@ class DriverResponse(DriverBase):
     vehicle_image: Optional[str] = None
     verification_notes: Optional[str] = None
     created_at: datetime
+    total_rides: Optional[int] = 0
+    average_rating: Optional[float] = None
+    rating_count: Optional[int] = 0
 
     class Config:
         from_attributes = True
