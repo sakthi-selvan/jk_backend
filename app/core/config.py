@@ -38,8 +38,10 @@ class Settings(BaseSettings):
     RAZORPAY_KEY_ID: Optional[str] = None
     RAZORPAY_KEY_SECRET: Optional[str] = None
 
-    # Force-complete is disabled unless explicitly enabled (ops/debug only)
-    ALLOW_FORCE_COMPLETE: bool = False
+    # Force-complete: drivers may finish early when customer changes plans
+    ALLOW_FORCE_COMPLETE: bool = True
+    # Max distance from drop-off to allow normal completion (km)
+    COMPLETE_DROP_OFF_RADIUS_KM: float = 1.5
 
     # Mapbox (server-side Directions for fare/ETA). Prefer a pk. public token.
     MAPBOX_ACCESS_TOKEN: Optional[str] = None

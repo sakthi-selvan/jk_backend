@@ -466,6 +466,10 @@ async def start_ride(
             detail="Ride not found"
         )
 
+    # Idempotent: already in progress — return current ride (avoids double-tap 400s)
+    if ride.status == "started":
+        return enrich_ride_response(ride, db, current_driver)
+
     if ride.status != "accepted":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -490,13 +494,12 @@ async def start_ride(
 async def complete_ride(
     ride_id: UUID,
     force: bool = False,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
     current_driver: Driver = Depends(get_current_driver),
     db: Session = Depends(get_db)
 ):
-    """Complete a ride - checks driver is within 500m of dropoff.
-
-    force=true is disabled unless ALLOW_FORCE_COMPLETE is set server-side.
-    """
+    """Complete a ride — driver must be near drop-off unless force is allowed."""
     ride = db.query(RideEnhanced).filter(
         RideEnhanced.id == ride_id,
         RideEnhanced.driver_id == current_driver.id
@@ -508,36 +511,53 @@ async def complete_ride(
             detail="Ride not found"
         )
 
+    # Idempotent: already completed
+    if ride.status == "completed":
+        return enrich_ride_response(ride, db, current_driver)
+
     if ride.status != "started":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Can only complete rides that are started"
         )
 
-    if force and not settings.ALLOW_FORCE_COMPLETE:
+    force_allowed = bool(settings.ALLOW_FORCE_COMPLETE)
+    if force and not force_allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Force complete is disabled. Reach the drop-off to complete the ride.",
         )
 
-    # Location-based completion check (500m radius)
+    # Prefer freshly reported phone GPS; fall back to last stored driver location
+    check_lat = latitude if latitude is not None else current_driver.current_lat
+    check_lng = longitude if longitude is not None else current_driver.current_lng
+    if latitude is not None and longitude is not None:
+        current_driver.current_lat = latitude
+        current_driver.current_lng = longitude
+        db.add(current_driver)
+
+    radius_km = float(settings.COMPLETE_DROP_OFF_RADIUS_KM or 1.5)
+
     if not force:
-        if not (current_driver.current_lat and current_driver.current_lng):
+        if check_lat is None or check_lng is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Current location required to complete ride. Enable GPS and try again.",
             )
         if ride.dropoff_lat and ride.dropoff_lng:
             distance_to_dropoff = calculate_distance(
-                current_driver.current_lat,
-                current_driver.current_lng,
+                check_lat,
+                check_lng,
                 ride.dropoff_lat,
                 ride.dropoff_lng
             )
-            if distance_to_dropoff > 0.5:
+            if distance_to_dropoff > radius_km:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"You are {distance_to_dropoff:.1f} km away from drop-off. Please reach the destination to complete the ride."
+                    detail=(
+                        f"You are {distance_to_dropoff:.1f} km away from drop-off. "
+                        f"Please reach within {radius_km:.1f} km to complete the ride."
+                    ),
                 )
 
     ride.status = "completed"
