@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, case
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from app.core.dependencies import get_db, get_current_admin
@@ -21,6 +21,19 @@ from app.schemas.ride_enhanced import (
 )
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _as_float(value, default: float = 0.0) -> float:
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def verify_admin(admin: Admin = Depends(get_current_admin)) -> Admin:
@@ -135,7 +148,7 @@ async def get_analytics_overview(
     db: Session = Depends(get_db)
 ):
     """Get overview analytics for the dashboard"""
-    start_date = datetime.now() - timedelta(days=days)
+    start_date = _utcnow() - timedelta(days=days)
 
     # Total rides by status
     rides_by_status = db.query(
@@ -151,18 +164,18 @@ async def get_analytics_overview(
     ).filter(
         RideEnhanced.created_at >= start_date,
         RideEnhanced.status == 'completed'
-    ).scalar() or 0.0
+    ).scalar()
 
     # Total rides
     total_rides = db.query(func.count(RideEnhanced.id)).filter(
         RideEnhanced.created_at >= start_date
-    ).scalar()
+    ).scalar() or 0
 
     # Completed rides
     completed_rides = db.query(func.count(RideEnhanced.id)).filter(
         RideEnhanced.created_at >= start_date,
         RideEnhanced.status == 'completed'
-    ).scalar()
+    ).scalar() or 0
 
     # Average fare
     avg_fare = db.query(
@@ -170,7 +183,7 @@ async def get_analytics_overview(
     ).filter(
         RideEnhanced.created_at >= start_date,
         RideEnhanced.status == 'completed'
-    ).scalar() or 0.0
+    ).scalar()
 
     # Total distance
     total_distance = db.query(
@@ -178,18 +191,18 @@ async def get_analytics_overview(
     ).filter(
         RideEnhanced.created_at >= start_date,
         RideEnhanced.status == 'completed'
-    ).scalar() or 0.0
+    ).scalar()
 
     return {
         "period_days": days,
         "start_date": start_date.isoformat(),
-        "total_rides": total_rides,
-        "completed_rides": completed_rides,
+        "total_rides": int(total_rides),
+        "completed_rides": int(completed_rides),
         "cancelled_rides": sum(item.count for item in rides_by_status if item.status == 'cancelled'),
         "active_rides": sum(item.count for item in rides_by_status if item.status in ['pending', 'accepted', 'started']),
-        "total_revenue": round(total_revenue, 2),
-        "average_fare": round(avg_fare, 2),
-        "total_distance_km": round(total_distance, 2),
+        "total_revenue": round(_as_float(total_revenue), 2),
+        "average_fare": round(_as_float(avg_fare), 2),
+        "total_distance_km": round(_as_float(total_distance), 2),
         "completion_rate": round((completed_rides / total_rides * 100) if total_rides > 0 else 0, 2),
         "rides_by_status": {item.status: item.count for item in rides_by_status}
     }
@@ -202,7 +215,7 @@ async def get_trip_type_analytics(
     db: Session = Depends(get_db)
 ):
     """Get analytics by trip type"""
-    start_date = datetime.now() - timedelta(days=days)
+    start_date = _utcnow() - timedelta(days=days)
 
     trip_analytics = db.query(
         RideEnhanced.trip_type,
@@ -221,9 +234,9 @@ async def get_trip_type_analytics(
             {
                 "trip_type": item.trip_type,
                 "ride_count": item.ride_count,
-                "total_revenue": round(item.total_revenue or 0, 2),
-                "avg_fare": round(item.avg_fare or 0, 2),
-                "total_distance_km": round(item.total_distance or 0, 2)
+                "total_revenue": round(_as_float(item.total_revenue), 2),
+                "avg_fare": round(_as_float(item.avg_fare), 2),
+                "total_distance_km": round(_as_float(item.total_distance), 2)
             }
             for item in trip_analytics
         ]
@@ -237,7 +250,7 @@ async def get_vehicle_category_analytics(
     db: Session = Depends(get_db)
 ):
     """Get analytics by vehicle category"""
-    start_date = datetime.now() - timedelta(days=days)
+    start_date = _utcnow() - timedelta(days=days)
 
     vehicle_analytics = db.query(
         RideEnhanced.vehicle_category,
@@ -256,9 +269,9 @@ async def get_vehicle_category_analytics(
             {
                 "vehicle_category": item.vehicle_category,
                 "ride_count": item.ride_count,
-                "total_revenue": round(item.total_revenue or 0, 2),
-                "avg_fare": round(item.avg_fare or 0, 2),
-                "total_distance_km": round(item.total_distance or 0, 2)
+                "total_revenue": round(_as_float(item.total_revenue), 2),
+                "avg_fare": round(_as_float(item.avg_fare), 2),
+                "total_distance_km": round(_as_float(item.total_distance), 2)
             }
             for item in vehicle_analytics
         ]
@@ -272,24 +285,25 @@ async def get_hourly_ride_distribution(
     db: Session = Depends(get_db)
 ):
     """Get ride distribution by hour of day"""
-    start_date = datetime.now() - timedelta(days=days)
+    start_date = _utcnow() - timedelta(days=days)
 
+    hour_col = func.extract('hour', RideEnhanced.created_at)
     hourly_data = db.query(
-        func.extract('hour', RideEnhanced.created_at).label('hour'),
+        hour_col.label('hour'),
         func.count(RideEnhanced.id).label('ride_count'),
         func.sum(RideEnhanced.fare).label('total_revenue')
     ).filter(
         RideEnhanced.created_at >= start_date,
         RideEnhanced.status == 'completed'
-    ).group_by('hour').order_by('hour').all()
+    ).group_by(hour_col).order_by(hour_col).all()
 
     return {
         "period_days": days,
         "hourly_distribution": [
             {
-                "hour": int(item.hour),
+                "hour": int(item.hour or 0),
                 "ride_count": item.ride_count,
-                "total_revenue": round(item.total_revenue or 0, 2)
+                "total_revenue": round(_as_float(item.total_revenue), 2)
             }
             for item in hourly_data
         ]
@@ -303,7 +317,7 @@ async def get_preference_analytics(
     db: Session = Depends(get_db)
 ):
     """Get analytics on ride preferences usage"""
-    start_date = datetime.now() - timedelta(days=days)
+    start_date = _utcnow() - timedelta(days=days)
 
     all_rides = db.query(RideEnhanced).filter(
         RideEnhanced.created_at >= start_date
@@ -328,10 +342,10 @@ async def get_preference_analytics(
     }
 
     for ride in all_rides:
-        if ride.preferences:
-            for pref, enabled in ride.preferences.items():
-                if enabled and pref in preferences_count:
-                    preferences_count[pref] += 1
+        prefs = ride.preferences if isinstance(ride.preferences, dict) else {}
+        for pref, enabled in prefs.items():
+            if enabled and pref in preferences_count:
+                preferences_count[pref] += 1
 
     return {
         "period_days": days,
@@ -373,16 +387,15 @@ async def get_recent_rides(
                 "trip_type": ride.trip_type,
                 "vehicle_category": ride.vehicle_category,
                 "status": ride.status,
-                "fare": ride.fare,
-                "distance_km": ride.distance_km,
+                "fare": float(ride.fare or 0),
+                "distance_km": float(ride.distance_km or 0),
                 "pickup_location": ride.pickup_location,
                 "dropoff_location": ride.dropoff_location,
-                "otp_verified": ride.otp_verified,
-                "is_scheduled": ride.is_scheduled,
+                "otp_verified": bool(ride.otp_verified),
+                "is_scheduled": bool(ride.is_scheduled),
                 "scheduled_datetime": ride.scheduled_datetime.isoformat() if ride.scheduled_datetime else None,
-                "created_at": ride.created_at.isoformat(),
-                "started_at": ride.started_at.isoformat() if ride.started_at else None,
-                "completed_at": ride.completed_at.isoformat() if ride.completed_at else None
+                "created_at": ride.created_at.isoformat() if ride.created_at else None,
+                "updated_at": ride.updated_at.isoformat() if ride.updated_at else None,
             }
             for ride in rides
         ]
@@ -396,23 +409,31 @@ async def get_revenue_forecast(
 ):
     """Get revenue trends and forecast"""
     # Last 30 days daily revenue
-    start_date = datetime.now() - timedelta(days=30)
+    start_date = _utcnow() - timedelta(days=30)
 
+    date_col = func.date(RideEnhanced.created_at)
     daily_revenue = db.query(
-        func.date(RideEnhanced.created_at).label('date'),
+        date_col.label('date'),
         func.count(RideEnhanced.id).label('ride_count'),
         func.sum(RideEnhanced.fare).label('revenue')
     ).filter(
         RideEnhanced.created_at >= start_date,
         RideEnhanced.status == 'completed'
-    ).group_by('date').order_by('date').all()
+    ).group_by(date_col).order_by(date_col).all()
 
     # Calculate averages
-    total_revenue = sum(item.revenue for item in daily_revenue if item.revenue)
+    total_revenue = sum(_as_float(item.revenue) for item in daily_revenue)
     total_rides = sum(item.ride_count for item in daily_revenue)
 
     avg_daily_revenue = total_revenue / 30 if total_revenue > 0 else 0
     avg_daily_rides = total_rides / 30 if total_rides > 0 else 0
+
+    def _date_iso(value):
+        if value is None:
+            return None
+        if hasattr(value, 'isoformat'):
+            return value.isoformat()
+        return str(value)
 
     return {
         "last_30_days": {
@@ -423,9 +444,9 @@ async def get_revenue_forecast(
         },
         "daily_data": [
             {
-                "date": item.date.isoformat(),
+                "date": _date_iso(item.date),
                 "ride_count": item.ride_count,
-                "revenue": round(item.revenue or 0, 2)
+                "revenue": round(_as_float(item.revenue), 2)
             }
             for item in daily_revenue
         ],
