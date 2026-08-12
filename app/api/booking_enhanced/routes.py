@@ -230,9 +230,9 @@ async def create_booking_enhanced(
     from app.services.dispatch import (
         user_has_active_ride,
         begin_dispatch,
-        assign_next_offer,
         emit_ride_offer,
         scheduled_ready_for_dispatch,
+        try_assign_waiting_ride,
     )
 
     if user_has_active_ride(db, current_user.id):
@@ -353,13 +353,15 @@ async def create_booking_enhanced(
         "sequential": settings.SEQUENTIAL_DISPATCH,
     })
 
-    # First exclusive offer — only if ready for dispatch now
+    # First exclusive offer — only if ready for dispatch now (row-locked)
     if scheduled_ready_for_dispatch(new_ride):
-        offered = assign_next_offer(db, new_ride)
-        if offered:
+        assigned = try_assign_waiting_ride(db, new_ride.id)
+        if assigned:
+            ride, offered = assigned
             db.commit()
-            db.refresh(new_ride)
-            await emit_ride_offer(new_ride, offered)
+            db.refresh(ride)
+            await emit_ride_offer(ride, offered)
+            return enrich_ride_with_driver(ride, db)
 
     return enrich_ride_with_driver(new_ride, db)
 

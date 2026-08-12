@@ -160,29 +160,31 @@ async def update_driver_location(
         # Driver just refreshed GPS while idle — try to claim a waiting ride immediately
         # instead of waiting for the background sweep (was up to 10s).
         from app.services.dispatch import (
-            assign_next_offer,
+            try_assign_waiting_ride,
             emit_ride_offer,
             scheduled_ready_for_dispatch,
-            begin_dispatch,
         )
-        waiting = (
-            db.query(RideEnhanced)
-            .filter(
-                RideEnhanced.status == "pending",
-                RideEnhanced.driver_id.is_(None),
-                RideEnhanced.offered_driver_id.is_(None),
+        waiting_ids = [
+            row[0]
+            for row in (
+                db.query(RideEnhanced.id)
+                .filter(
+                    RideEnhanced.status == "pending",
+                    RideEnhanced.driver_id.is_(None),
+                    RideEnhanced.offered_driver_id.is_(None),
+                )
+                .order_by(RideEnhanced.created_at.asc())
+                .limit(5)
+                .all()
             )
-            .order_by(RideEnhanced.created_at.asc())
-            .limit(5)
-            .all()
-        )
-        for ride in waiting:
-            if not scheduled_ready_for_dispatch(ride):
+        ]
+        for ride_id in waiting_ids:
+            peek = db.query(RideEnhanced).filter(RideEnhanced.id == ride_id).first()
+            if peek and not scheduled_ready_for_dispatch(peek):
                 continue
-            if not getattr(ride, "dispatch_started_at", None):
-                begin_dispatch(ride)
-            offered = assign_next_offer(db, ride)
-            if offered:
+            assigned = try_assign_waiting_ride(db, ride_id)
+            if assigned:
+                ride, offered = assigned
                 db.commit()
                 db.refresh(ride)
                 await emit_ride_offer(ride, offered)
@@ -385,7 +387,29 @@ async def accept_ride(
             detail="Driver must be online to accept rides"
         )
 
-    if not driver_location_fresh(current_driver):
+    # Idempotent: already accepted by this driver
+    already = (
+        db.query(RideEnhanced)
+        .filter(
+            RideEnhanced.id == ride_id,
+            RideEnhanced.driver_id == current_driver.id,
+            RideEnhanced.status.in_(["accepted", "started"]),
+        )
+        .first()
+    )
+    if already:
+        return enrich_ride_response(already, db, current_driver)
+
+    has_coords = current_driver.current_lat is not None and current_driver.current_lng is not None
+    # Exclusive offers stay visible with briefly stale GPS — allow accept the same way
+    # so the 40s window is not burned on a GPS freshness check after the card is shown.
+    if settings.SEQUENTIAL_DISPATCH:
+        if not has_coords:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Location required. Enable GPS before accepting.",
+            )
+    elif not driver_location_fresh(current_driver):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Location is stale. Enable GPS and update location before accepting.",
@@ -905,7 +929,12 @@ async def update_driver_status_v2(
     db: Session = Depends(get_db),
 ):
     """Go online/offline with docs + location gates."""
-    from app.services.dispatch import driver_docs_ready, driver_location_fresh
+    from app.services.dispatch import (
+        driver_docs_ready,
+        driver_location_fresh,
+        release_driver_exclusive_offers,
+        emit_advance_events,
+    )
 
     want_online = bool(payload.get("is_online"))
     if want_online:
@@ -919,9 +948,16 @@ async def update_driver_status_v2(
                     detail="Share your GPS location before going online",
                 )
 
+    was_online = bool(current_driver.is_online)
     current_driver.is_online = want_online
     db.commit()
     db.refresh(current_driver)
+
+    # Going offline mid-offer: release exclusive window immediately and reassign
+    if was_online and not want_online:
+        events = await release_driver_exclusive_offers(db, current_driver.id)
+        await emit_advance_events(events)
+
     return {
         "id": str(current_driver.id),
         "is_online": current_driver.is_online,

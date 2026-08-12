@@ -226,9 +226,27 @@ def begin_dispatch(ride: RideEnhanced) -> None:
     ride.offer_started_at = None
 
 
+def lock_pending_ride(db: Session, ride_id: UUID) -> Optional[RideEnhanced]:
+    """
+    Lock a still-pending, unassigned ride for exclusive offer mutation.
+    Returns None if the ride was accepted/cancelled concurrently.
+    """
+    return (
+        db.query(RideEnhanced)
+        .filter(
+            RideEnhanced.id == ride_id,
+            RideEnhanced.status == "pending",
+            RideEnhanced.driver_id.is_(None),
+        )
+        .with_for_update()
+        .first()
+    )
+
+
 def assign_next_offer(db: Session, ride: RideEnhanced) -> Optional[Driver]:
     """
     Give exclusive offer to the next nearest eligible driver.
+    Caller must hold a row lock (FOR UPDATE) when concurrent with accept/sweep.
     Returns the offered driver, or None if nobody available.
     """
     if ride.status != "pending" or ride.driver_id is not None:
@@ -251,6 +269,27 @@ def assign_next_offer(db: Session, ride: RideEnhanced) -> Optional[Driver]:
     ride.offered_driver_id = driver.id
     ride.offer_started_at = _utcnow()
     return driver
+
+
+def try_assign_waiting_ride(db: Session, ride_id: UUID) -> Optional[Tuple[RideEnhanced, Driver]]:
+    """
+    Lock a waiting ride (no exclusive holder) and assign next offer.
+    Safe against concurrent accept / sweep / GPS-triggered assign.
+    """
+    ride = lock_pending_ride(db, ride_id)
+    if not ride:
+        return None
+    # Another assigner won between candidate query and lock
+    if ride.offered_driver_id is not None:
+        return None
+    if not scheduled_ready_for_dispatch(ride):
+        return None
+    if not getattr(ride, "dispatch_started_at", None):
+        begin_dispatch(ride)
+    driver = assign_next_offer(db, ride)
+    if not driver:
+        return None
+    return ride, driver
 
 
 def record_driver_pass(db: Session, ride: RideEnhanced, driver_id: UUID, reason: str) -> None:
@@ -349,20 +388,28 @@ async def advance_timed_out_offers(db: Session) -> list[dict]:
     """
     For pending rides with an exclusive offer past DRIVER_OFFER_SECONDS:
     auto-pass that driver and offer the next one.
+    Each ride is re-locked with FOR UPDATE so accept cannot race offer mutation.
     Returns event descriptors for callers to emit after commit.
     """
     events: list[dict] = []
-    rides = (
-        db.query(RideEnhanced)
-        .filter(
-            RideEnhanced.status == "pending",
-            RideEnhanced.driver_id.is_(None),
-            RideEnhanced.offered_driver_id.isnot(None),
+    candidate_ids = [
+        row[0]
+        for row in (
+            db.query(RideEnhanced.id)
+            .filter(
+                RideEnhanced.status == "pending",
+                RideEnhanced.driver_id.is_(None),
+                RideEnhanced.offered_driver_id.isnot(None),
+            )
+            .order_by(RideEnhanced.id.asc())
+            .all()
         )
-        .all()
-    )
+    ]
 
-    for ride in rides:
+    for ride_id in candidate_ids:
+        ride = lock_pending_ride(db, ride_id)
+        if not ride or ride.offered_driver_id is None:
+            continue
         if not scheduled_ready_for_dispatch(ride):
             continue
         if driver_offer_remaining_seconds(ride) > 0:
@@ -432,13 +479,24 @@ async def emit_advance_events(events: list[dict]) -> None:
 
 def expire_stale_pending_rides(db: Session) -> list[RideEnhanced]:
     """Cancel pending rides past overall search TTL. Returns expired rides."""
-    rides = db.query(RideEnhanced).filter(
-        RideEnhanced.status == "pending",
-        RideEnhanced.driver_id.is_(None),
-    ).all()
+    candidate_ids = [
+        row[0]
+        for row in (
+            db.query(RideEnhanced.id)
+            .filter(
+                RideEnhanced.status == "pending",
+                RideEnhanced.driver_id.is_(None),
+            )
+            .order_by(RideEnhanced.id.asc())
+            .all()
+        )
+    ]
 
     expired: list[RideEnhanced] = []
-    for ride in rides:
+    for ride_id in candidate_ids:
+        ride = lock_pending_ride(db, ride_id)
+        if not ride:
+            continue
         if ride.is_scheduled and not scheduled_ready_for_dispatch(ride):
             continue
         if search_remaining_seconds(ride) > 0:
@@ -456,6 +514,58 @@ def expire_stale_pending_rides(db: Session) -> list[RideEnhanced]:
         for ride in expired:
             db.refresh(ride)
     return expired
+
+
+async def release_driver_exclusive_offers(db: Session, driver_id: UUID) -> list[dict]:
+    """
+    Driver went offline while holding exclusive offer(s): clear without pass-ban,
+    reassign next eligible driver, emit offer_expired to the offline driver.
+    """
+    events: list[dict] = []
+    candidate_ids = [
+        row[0]
+        for row in (
+            db.query(RideEnhanced.id)
+            .filter(
+                RideEnhanced.status == "pending",
+                RideEnhanced.driver_id.is_(None),
+                RideEnhanced.offered_driver_id == driver_id,
+            )
+            .order_by(RideEnhanced.id.asc())
+            .all()
+        )
+    ]
+    for ride_id in candidate_ids:
+        ride = lock_pending_ride(db, ride_id)
+        if not ride or ride.offered_driver_id != driver_id:
+            continue
+        events.append({
+            "type": "offer_timeout",
+            "ride_id": str(ride.id),
+            "driver_id": str(driver_id),
+        })
+        ride.offered_driver_id = None
+        ride.offer_started_at = None
+        next_driver = assign_next_offer(db, ride)
+        if next_driver:
+            events.append({
+                "type": "ride_offer",
+                "ride": ride,
+                "driver": next_driver,
+            })
+        elif search_remaining_seconds(ride) <= 0:
+            ride.status = "cancelled"
+            ride.cancellation_reason = (
+                f"Auto-cancelled: no driver accepted within {settings.OFFER_TTL_SECONDS // 60} minutes"
+            )
+            events.append({"type": "ride_cancelled", "ride": ride})
+
+    if events:
+        db.commit()
+        for ev in events:
+            if ev.get("type") in ("ride_offer", "ride_cancelled") and ev.get("ride"):
+                db.refresh(ev["ride"])
+    return events
 
 
 async def emit_expired(rides: list[RideEnhanced]) -> None:
