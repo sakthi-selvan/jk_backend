@@ -3,6 +3,14 @@ from typing import List, Optional
 import json
 
 
+# Always allow these even if .env ALLOWED_ORIGINS omits them.
+REQUIRED_CORS_ORIGINS: tuple[str, ...] = (
+    "https://jktaxitamilnadu.com",
+    "https://www.jktaxitamilnadu.com",
+    "https://admin.jktaxitamilnadu.com",
+)
+
+
 class Settings(BaseSettings):
     # App Config
     APP_NAME: str = "JK Taxi API"
@@ -74,8 +82,8 @@ class Settings(BaseSettings):
     CANCEL_FEE_ACCEPTED: float = 30.0
     CANCEL_FEE_STARTED: float = 50.0
 
-    # CORS
-    ALLOWED_ORIGINS: str = '["http://localhost:3000","http://localhost:5173","http://localhost:5174","http://localhost:8081","http://localhost:19000","http://localhost:19006","https://jktaxitamilnadu.com","https://admin.jktaxitamilnadu.com"]'
+    # CORS — production domains are always merged in allowed_origins_list
+    ALLOWED_ORIGINS: str = '["http://localhost:3000","http://localhost:5173","http://localhost:5174","http://localhost:8081","http://localhost:19000","http://localhost:19006","https://jktaxitamilnadu.com","https://www.jktaxitamilnadu.com","https://admin.jktaxitamilnadu.com"]'
 
     def client_mapbox_token(self) -> Optional[str]:
         """Public pk. token safe to send to apps after login (never return sk. secrets)."""
@@ -87,11 +95,24 @@ class Settings(BaseSettings):
 
     @property
     def allowed_origins_list(self) -> List[str]:
-        """Parse ALLOWED_ORIGINS from JSON string to list"""
-        try:
-            return json.loads(self.ALLOWED_ORIGINS)
-        except Exception:
-            return ["http://localhost:3000", "http://localhost:8081"]
+        """Parse ALLOWED_ORIGINS from JSON string and merge required production domains."""
+        origins: List[str] = []
+        raw = (self.ALLOWED_ORIGINS or "").strip()
+        if raw == "*":
+            origins = list(REQUIRED_CORS_ORIGINS)
+        else:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    origins = [str(o).strip() for o in parsed if str(o).strip()]
+            except Exception:
+                origins = [part.strip() for part in raw.split(",") if part.strip()]
+
+        merged: List[str] = []
+        for origin in (*origins, *REQUIRED_CORS_ORIGINS):
+            if origin and origin not in merged:
+                merged.append(origin)
+        return merged or ["http://localhost:3000"]
 
     class Config:
         env_file = ".env"

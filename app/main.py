@@ -84,12 +84,21 @@ async def _dispatch_sweep_loop():
 
 @app.middleware("http")
 async def global_rate_limit(request, call_next):
-    # Lightweight global cap; auth OTP has its own tighter limit
+    # Never rate-limit CORS preflight — browsers require a clean OPTIONS response.
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
     client = request.client.host if request.client else "unknown"
     ok, msg = check_rate_limit(f"global:{client}", limit=120, window_seconds=60)
     if not ok:
         from fastapi.responses import JSONResponse
-        return JSONResponse(status_code=429, content={"detail": msg})
+        response = JSONResponse(status_code=429, content={"detail": msg})
+        origin = request.headers.get("origin")
+        if origin and origin in settings.allowed_origins_list:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Vary"] = "Origin"
+        return response
     return await call_next(request)
 
 
