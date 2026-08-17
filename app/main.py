@@ -50,48 +50,20 @@ async def _dispatch_sweep_loop():
         expire_stale_pending_rides,
         advance_timed_out_offers,
         emit_advance_events,
-        try_assign_waiting_ride,
-        emit_ride_offer,
-        scheduled_ready_for_dispatch,
+        assign_waiting_rides,
     )
-    from app.models.ride_enhanced import RideEnhanced
     from app.services.realtime import hub
 
     while True:
         try:
             db = SessionLocal()
             try:
-                # 1) Advance per-driver exclusive timeouts (FOR UPDATE per ride)
                 events = await advance_timed_out_offers(db)
                 await emit_advance_events(events)
 
-                # 2) Pick up pending rides with no current offer (new / waiting)
-                waiting_ids = [
-                    row[0]
-                    for row in (
-                        db.query(RideEnhanced.id)
-                        .filter(
-                            RideEnhanced.status == "pending",
-                            RideEnhanced.driver_id.is_(None),
-                            RideEnhanced.offered_driver_id.is_(None),
-                        )
-                        .order_by(RideEnhanced.id.asc())
-                        .all()
-                    )
-                ]
-                for ride_id in waiting_ids:
-                    # Skip scheduled-not-ready without locking when possible
-                    peek = db.query(RideEnhanced).filter(RideEnhanced.id == ride_id).first()
-                    if peek and not scheduled_ready_for_dispatch(peek):
-                        continue
-                    assigned = try_assign_waiting_ride(db, ride_id)
-                    if assigned:
-                        ride, driver = assigned
-                        db.commit()
-                        db.refresh(ride)
-                        await emit_ride_offer(ride, driver)
+                offer_events = assign_waiting_rides(db)
+                await emit_advance_events(offer_events)
 
-                # 3) Expire overall search TTL
                 expired = expire_stale_pending_rides(db)
                 for ride in expired:
                     data = {

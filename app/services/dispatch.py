@@ -1,6 +1,8 @@
 """Dispatch: sequential one-by-one exclusive offers, TTL, vehicle match, reassign."""
 from __future__ import annotations
 
+import asyncio
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Set, List, Tuple
 from uuid import UUID
@@ -84,11 +86,19 @@ def normalize_driver_category(vehicle_type: Optional[str]) -> str:
     return "other"
 
 def declined_driver_ids(db: Session, ride_id: UUID) -> Set[UUID]:
-    rows = db.query(RideCancellation.canceller_id).filter(
+    rows = db.query(RideCancellation.canceller_id, RideCancellation.reason).filter(
         RideCancellation.ride_id == ride_id,
         RideCancellation.cancelled_by == "driver",
     ).all()
-    return {r[0] for r in rows if r[0]}
+    excluded: Set[UUID] = set()
+    for canceller_id, reason in rows:
+        if not canceller_id:
+            continue
+        # Timed-out offers are not a permanent pass — driver may be re-offered later.
+        if reason == "offer_timeout":
+            continue
+        excluded.add(canceller_id)
+    return excluded
 
 
 def driver_has_active_ride(db: Session, driver_id: UUID) -> bool:
@@ -183,7 +193,10 @@ def _rank_eligible_drivers(db: Session, ride: RideEnhanced) -> List[Tuple[Driver
 
     drivers = (
         db.query(Driver)
-        .filter(Driver.is_online == True)  # noqa: E712
+        .filter(
+            Driver.is_online == True,  # noqa: E712
+            Driver.is_active == True,  # noqa: E712
+        )
         .all()
     )
 
@@ -317,7 +330,6 @@ def record_driver_pass(db: Session, ride: RideEnhanced, driver_id: UUID, reason:
 
 
 async def emit_ride_offer(ride: RideEnhanced, driver: Driver) -> None:
-    """Push a full offer payload so the driver app can show Accept UI immediately."""
     from app.services.routing import estimate_pickup_eta_minutes, haversine_km
 
     distance_to_pickup = None
@@ -384,10 +396,29 @@ async def emit_ride_offer(ride: RideEnhanced, driver: Driver) -> None:
     })
 
 
+def _offered_driver_still_valid(db: Session, ride: RideEnhanced) -> bool:
+    """True while the exclusive holder is online, fresh, and within their offer window."""
+    if not ride.offered_driver_id:
+        return False
+    if driver_offer_remaining_seconds(ride) <= 0:
+        return False
+    driver = db.query(Driver).filter(Driver.id == ride.offered_driver_id).first()
+    if not driver or not driver.is_online or not driver.is_active:
+        return False
+    ok, _ = driver_docs_ready(driver)
+    if not ok or not driver_location_fresh(driver):
+        return False
+    if driver_has_active_ride(db, driver.id):
+        return False
+    if not vehicle_matches(driver, ride.vehicle_category):
+        return False
+    return True
+
+
 async def advance_timed_out_offers(db: Session) -> list[dict]:
     """
-    For pending rides with an exclusive offer past DRIVER_OFFER_SECONDS:
-    auto-pass that driver and offer the next one.
+    Release exclusive offers when timed out or holder went offline/stale.
+    Does NOT permanently exclude timed-out drivers — they can be re-offered later.
     Each ride is re-locked with FOR UPDATE so accept cannot race offer mutation.
     Returns event descriptors for callers to emit after commit.
     """
@@ -412,16 +443,18 @@ async def advance_timed_out_offers(db: Session) -> list[dict]:
             continue
         if not scheduled_ready_for_dispatch(ride):
             continue
-        if driver_offer_remaining_seconds(ride) > 0:
+        if _offered_driver_still_valid(db, ride):
             continue
 
-        timed_out_id = ride.offered_driver_id
-        if timed_out_id:
-            record_driver_pass(db, ride, timed_out_id, "offer_timeout")
+        prev_id = ride.offered_driver_id
+        timed_out = prev_id and driver_offer_remaining_seconds(ride) <= 0
+        ride.offered_driver_id = None
+        ride.offer_started_at = None
+        if prev_id:
             events.append({
-                "type": "offer_timeout",
+                "type": "offer_timeout" if timed_out else "offer_released",
                 "ride_id": str(ride.id),
-                "driver_id": str(timed_out_id),
+                "driver_id": str(prev_id),
             })
 
         next_driver = assign_next_offer(db, ride)
@@ -440,9 +473,6 @@ async def advance_timed_out_offers(db: Session) -> list[dict]:
             ride.offer_started_at = None
             events.append({"type": "ride_cancelled", "ride": ride})
         else:
-            # Keep searching; clear exclusive so next sweep can retry
-            ride.offered_driver_id = None
-            ride.offer_started_at = None
             events.append({"type": "waiting_drivers", "ride_id": str(ride.id)})
 
     if events:
@@ -455,13 +485,75 @@ async def advance_timed_out_offers(db: Session) -> list[dict]:
     return events
 
 
+def assign_waiting_rides(db: Session) -> list[dict]:
+    """Offer pending rides that have no current exclusive holder."""
+    events: list[dict] = []
+    waiting_ids = [
+        row[0]
+        for row in (
+            db.query(RideEnhanced.id)
+            .filter(
+                RideEnhanced.status == "pending",
+                RideEnhanced.driver_id.is_(None),
+                RideEnhanced.offered_driver_id.is_(None),
+            )
+            .order_by(RideEnhanced.id.asc())
+            .all()
+        )
+    ]
+    for ride_id in waiting_ids:
+        peek = db.query(RideEnhanced).filter(RideEnhanced.id == ride_id).first()
+        if peek and not scheduled_ready_for_dispatch(peek):
+            continue
+        assigned = try_assign_waiting_ride(db, ride_id)
+        if assigned:
+            ride, driver = assigned
+            events.append({"type": "ride_offer", "ride": ride, "driver": driver})
+    if events:
+        db.commit()
+        for ev in events:
+            if ev.get("ride"):
+                db.refresh(ev["ride"])
+    return events
+
+
+_dispatch_progress_lock = asyncio.Lock()
+_last_dispatch_progress_at = 0.0
+
+
+async def ensure_dispatch_progress(db: Session, *, force: bool = False) -> None:
+    """
+    Advance dispatch when drivers poll or refresh GPS.
+    Debounced globally to avoid hammering the DB on every location ping.
+    """
+    global _last_dispatch_progress_at
+    now = time.monotonic()
+    min_interval = max(2.0, float(settings.DISPATCH_SWEEP_SECONDS) / 2)
+    if not force and (now - _last_dispatch_progress_at) < min_interval:
+        return
+
+    async with _dispatch_progress_lock:
+        now = time.monotonic()
+        if not force and (now - _last_dispatch_progress_at) < min_interval:
+            return
+        _last_dispatch_progress_at = now
+
+        events = await advance_timed_out_offers(db)
+        events.extend(assign_waiting_rides(db))
+        await emit_advance_events(events)
+
+
 async def emit_advance_events(events: list[dict]) -> None:
     for ev in events:
         kind = ev.get("type")
         if kind == "ride_offer":
             await emit_ride_offer(ev["ride"], ev["driver"])
-        elif kind == "offer_timeout":
+        elif kind in ("offer_timeout", "offer_released"):
             await hub.publish_driver(ev["driver_id"], "offer_expired", {
+                "ride_id": ev["ride_id"],
+            })
+        elif kind == "waiting_drivers":
+            await hub.publish(hub.drivers_online_channel(), "ride_searching", {
                 "ride_id": ev["ride_id"],
             })
         elif kind == "ride_cancelled":

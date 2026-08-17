@@ -157,38 +157,8 @@ async def update_driver_location(
             await hub.publish_ride(str(active_ride.id), "driver_location", payload)
             await hub.publish_user(str(active_ride.user_id), "driver_location", payload)
     elif current_driver.is_online:
-        # Driver just refreshed GPS while idle — try to claim a waiting ride immediately
-        # instead of waiting for the background sweep (was up to 10s).
-        from app.services.dispatch import (
-            try_assign_waiting_ride,
-            emit_ride_offer,
-            scheduled_ready_for_dispatch,
-        )
-        waiting_ids = [
-            row[0]
-            for row in (
-                db.query(RideEnhanced.id)
-                .filter(
-                    RideEnhanced.status == "pending",
-                    RideEnhanced.driver_id.is_(None),
-                    RideEnhanced.offered_driver_id.is_(None),
-                )
-                .order_by(RideEnhanced.created_at.asc())
-                .limit(5)
-                .all()
-            )
-        ]
-        for ride_id in waiting_ids:
-            peek = db.query(RideEnhanced).filter(RideEnhanced.id == ride_id).first()
-            if peek and not scheduled_ready_for_dispatch(peek):
-                continue
-            assigned = try_assign_waiting_ride(db, ride_id)
-            if assigned:
-                ride, offered = assigned
-                db.commit()
-                db.refresh(ride)
-                await emit_ride_offer(ride, offered)
-                break
+        from app.services.dispatch import ensure_dispatch_progress
+        await ensure_dispatch_progress(db)
 
     return {"status": "ok", "sequence": location.sequence}
 
@@ -209,9 +179,11 @@ async def get_available_rides(
         offer_remaining_seconds,
         driver_offer_remaining_seconds,
         offer_is_for_driver,
+        ensure_dispatch_progress,
     )
     from app.services.routing import estimate_pickup_eta_minutes, haversine_km
 
+    await ensure_dispatch_progress(db)
     expire_stale_pending_rides(db)
 
     ok, reason = driver_docs_ready(current_driver)
@@ -934,6 +906,7 @@ async def update_driver_status_v2(
         driver_location_fresh,
         release_driver_exclusive_offers,
         emit_advance_events,
+        ensure_dispatch_progress,
     )
 
     want_online = bool(payload.get("is_online"))
@@ -941,22 +914,27 @@ async def update_driver_status_v2(
         ok, reason = driver_docs_ready(current_driver)
         if not ok:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=reason)
+        if current_driver.current_lat is None or current_driver.current_lng is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Share your GPS location before going online",
+            )
         if not driver_location_fresh(current_driver):
-            if current_driver.current_lat is None or current_driver.current_lng is None:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Share your GPS location before going online",
-                )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="GPS location is stale. Enable location and try again.",
+            )
 
     was_online = bool(current_driver.is_online)
     current_driver.is_online = want_online
     db.commit()
     db.refresh(current_driver)
 
-    # Going offline mid-offer: release exclusive window immediately and reassign
     if was_online and not want_online:
         events = await release_driver_exclusive_offers(db, current_driver.id)
         await emit_advance_events(events)
+    elif want_online and not was_online:
+        await ensure_dispatch_progress(db, force=True)
 
     return {
         "id": str(current_driver.id),
