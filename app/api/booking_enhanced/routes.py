@@ -659,6 +659,42 @@ def _assert_ride_payment_actor(payload: dict, ride: RideEnhanced):
     raise HTTPException(status_code=403, detail="Not allowed to pay for this ride")
 
 
+def _razorpay_client():
+    import razorpay
+
+    key_id = (settings.RAZORPAY_KEY_ID or "").strip()
+    key_secret = (settings.RAZORPAY_KEY_SECRET or "").strip()
+    if not key_id or not key_secret:
+        raise HTTPException(
+            status_code=503,
+            detail="Online payment is not configured. Use cash collection.",
+        )
+    return razorpay.Client(auth=(key_id, key_secret))
+
+
+def _raise_for_razorpay_error(exc: Exception) -> None:
+    import razorpay
+
+    message = str(exc).lower()
+    if isinstance(exc, razorpay.errors.BadRequestError) and "authentication" in message:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Online payment is unavailable (Razorpay credentials invalid on server). "
+                "Collect cash or ask admin to fix RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET."
+            ),
+        ) from None
+    if isinstance(exc, (razorpay.errors.BadRequestError, razorpay.errors.ServerError)):
+        raise HTTPException(
+            status_code=502,
+            detail="Payment provider rejected the request. Try cash collection.",
+        ) from None
+    raise HTTPException(
+        status_code=502,
+        detail="Could not reach payment provider. Try cash collection.",
+    ) from None
+
+
 @router.post("/{ride_id}/payment/create-order", response_model=CreateOrderResponse)
 async def create_payment_order(
     ride_id: UUID,
@@ -666,11 +702,7 @@ async def create_payment_order(
     db: Session = Depends(get_db),
 ):
     """Create a Razorpay order for a completed ride (customer or assigned driver only)"""
-    import razorpay
     from app.core.config import settings
-
-    if not settings.RAZORPAY_KEY_ID or not settings.RAZORPAY_KEY_SECRET:
-        raise HTTPException(status_code=503, detail="Payment provider not configured")
 
     payload = decode_token(credentials.credentials)
     if not payload or payload.get("type") != "access":
@@ -689,15 +721,18 @@ async def create_payment_order(
     if ride.payment_status == "paid":
         raise HTTPException(status_code=400, detail="Payment already completed")
 
-    client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+    client = _razorpay_client()
     amount_paise = int(round(ride.fare * 100))
 
-    order = client.order.create({
-        "amount": amount_paise,
-        "currency": "INR",
-        "receipt": f"ride_{ride_id}",
-        "notes": {"ride_id": str(ride_id)},
-    })
+    try:
+        order = client.order.create({
+            "amount": amount_paise,
+            "currency": "INR",
+            "receipt": f"ride_{ride_id}",
+            "notes": {"ride_id": str(ride_id)},
+        })
+    except Exception as exc:
+        _raise_for_razorpay_error(exc)
 
     # Bind order to ride until verification (prefix keeps cash/txn ids distinct)
     ride.transaction_id = f"order:{order['id']}"
@@ -719,7 +754,6 @@ async def verify_payment(
     db: Session = Depends(get_db),
 ):
     """Verify Razorpay payment signature and mark ride as paid"""
-    import razorpay
     from app.core.config import settings
 
     if not settings.RAZORPAY_KEY_ID or not settings.RAZORPAY_KEY_SECRET:
@@ -749,7 +783,7 @@ async def verify_payment(
     if expected_order and payment_data.razorpay_order_id != expected_order:
         raise HTTPException(status_code=400, detail="Order does not belong to this ride")
 
-    client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+    client = _razorpay_client()
 
     try:
         client.utility.verify_payment_signature({
@@ -757,8 +791,11 @@ async def verify_payment(
             "razorpay_payment_id": payment_data.razorpay_payment_id,
             "razorpay_signature": payment_data.razorpay_signature,
         })
-    except Exception:
-        raise HTTPException(status_code=400, detail="Payment verification failed")
+    except Exception as exc:
+        import razorpay
+        if isinstance(exc, (razorpay.errors.SignatureVerificationError, razorpay.errors.BadRequestError)):
+            raise HTTPException(status_code=400, detail="Payment verification failed") from None
+        _raise_for_razorpay_error(exc)
 
     ride.payment_status = "paid"
     ride.payment_method = "online"

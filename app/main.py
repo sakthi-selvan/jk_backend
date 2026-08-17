@@ -1,6 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 import asyncio
 from app.core.config import settings
 from app.db.base import Base
@@ -100,6 +101,15 @@ async def global_rate_limit(request, call_next):
             response.headers["Vary"] = "Origin"
         return response
     return await call_next(request)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Avoid leaking stack traces to mobile clients in production."""
+    print(f"[unhandled] {request.method} {request.url.path}: {exc!r}")
+    if settings.DEBUG:
+        return JSONResponse(status_code=500, content={"detail": str(exc)})
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 @app.on_event("startup")
