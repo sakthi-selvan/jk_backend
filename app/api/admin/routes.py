@@ -232,6 +232,7 @@ async def get_active_rides(
             if driver:
                 ride_data["driver_name"] = driver.name
                 ride_data["driver_phone"] = driver.phone
+                ride_data["driver_vehicle_type"] = driver.vehicle_type
                 ride_data["driver_lat"] = driver.current_lat
                 ride_data["driver_lng"] = driver.current_lng
         results.append(ride_data)
