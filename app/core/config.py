@@ -42,10 +42,6 @@ class Settings(BaseSettings):
     TELESIGN_CUSTOMER_ID: Optional[str] = None
     TELESIGN_API_KEY: Optional[str] = None
 
-    # Razorpay — load only from environment (no defaults)
-    RAZORPAY_KEY_ID: Optional[str] = None
-    RAZORPAY_KEY_SECRET: Optional[str] = None
-
     # Force-complete: drivers may finish early when customer changes plans
     ALLOW_FORCE_COMPLETE: bool = True
     # Max distance from drop-off to allow normal completion (km)
