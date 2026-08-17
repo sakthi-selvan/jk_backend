@@ -50,10 +50,10 @@ async def submit_rating(
 
     existing = db.query(RideRating).filter(RideRating.ride_id == ride_id).first()
     if existing:
-        existing.rating = body.rating
-        existing.comment = body.comment
-        db.commit()
-        return {"message": "Rating updated", "rating": existing.rating}
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This ride has already been rated",
+        )
 
     row = RideRating(
         ride_id=ride_id,

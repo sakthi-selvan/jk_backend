@@ -212,6 +212,9 @@ class RideEnhancedResponse(BaseModel):
     driver_average_rating: Optional[float] = None
     driver_rating_count: Optional[int] = None
 
+    # Customer's rating for this ride (null until rated)
+    customer_rating: Optional[int] = None
+
     created_at: datetime
     updated_at: datetime
 

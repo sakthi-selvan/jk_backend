@@ -9,6 +9,7 @@ from app.schemas.ride_enhanced import (
     VehicleCategoryResponse, FareBreakdown
 )
 from app.models.ride_enhanced import RideEnhanced, generate_ride_otp
+from app.models.rating import RideRating
 from app.models.vehicle_category import VehicleCategoryConfig
 from app.models.user import User
 from app.models.driver import Driver
@@ -366,7 +367,11 @@ async def create_booking_enhanced(
     return enrich_ride_with_driver(new_ride, db)
 
 
-def enrich_ride_with_driver(ride: RideEnhanced, db: Session) -> dict:
+def enrich_ride_with_driver(
+    ride: RideEnhanced,
+    db: Session,
+    customer_rating: Optional[int] = None,
+) -> dict:
     """Add driver details to ride response"""
     ride_dict = {c.name: getattr(ride, c.name) for c in ride.__table__.columns}
     ride_dict['driver_name'] = None
@@ -377,6 +382,7 @@ def enrich_ride_with_driver(ride: RideEnhanced, db: Session) -> dict:
     ride_dict['driver_total_rides'] = 0
     ride_dict['driver_average_rating'] = None
     ride_dict['driver_rating_count'] = 0
+    ride_dict['customer_rating'] = customer_rating
 
     if ride.driver_id:
         driver = db.query(Driver).filter(Driver.id == ride.driver_id).first()
@@ -387,6 +393,14 @@ def enrich_ride_with_driver(ride: RideEnhanced, db: Session) -> dict:
             ride_dict['driver_vehicle_type'] = driver.vehicle_type
             ride_dict['driver_vehicle_image'] = driver.vehicle_image
             ride_dict.update(get_driver_public_stats(db, driver.id))
+
+    if customer_rating is None:
+        rating_row = (
+            db.query(RideRating.rating)
+            .filter(RideRating.ride_id == ride.id)
+            .first()
+        )
+        ride_dict['customer_rating'] = rating_row[0] if rating_row else None
 
     return ride_dict
 
@@ -617,7 +631,20 @@ async def get_ride_history(
         RideEnhanced.status.in_(["completed", "cancelled"])
     ).order_by(RideEnhanced.created_at.desc()).all()
 
-    return [enrich_ride_with_driver(ride, db) for ride in rides]
+    ride_ids = [ride.id for ride in rides]
+    ratings_by_ride: dict = {}
+    if ride_ids:
+        rating_rows = (
+            db.query(RideRating.ride_id, RideRating.rating)
+            .filter(RideRating.ride_id.in_(ride_ids))
+            .all()
+        )
+        ratings_by_ride = {row[0]: row[1] for row in rating_rows}
+
+    return [
+        enrich_ride_with_driver(ride, db, customer_rating=ratings_by_ride.get(ride.id))
+        for ride in rides
+    ]
 
 
 @router.post("/{ride_id}/payment/cash")
