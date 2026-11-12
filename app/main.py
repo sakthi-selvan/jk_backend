@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 import asyncio
 from app.core.config import settings
 from app.db.base import Base
-from app.db.database import engine, SessionLocal
+from app.db.database import schema_engine, SessionLocal
 from app.api.auth import routes as auth_routes
 from app.api.user import routes as user_routes
 from app.api.driver import routes as driver_routes
@@ -125,7 +125,7 @@ async def startup():
     import app.models.rating
 
     # Safe if tables already exist — needed so empty DBs get vehicle_categories before seed.
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(bind=schema_engine)
     try:
         from app.services.schema_ensure import ensure_runtime_columns, ensure_default_vehicle_categories
         ensure_runtime_columns()
@@ -144,12 +144,14 @@ async def shutdown():
         _dispatch_task.cancel()
         try:
             await _dispatch_task
-        except Exception:
+        except (asyncio.CancelledError, Exception):
+            # CancelledError is a BaseException; swallow it so shutdown is clean.
             pass
+        _dispatch_task = None
 
 
 # Health check
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health_check():
     return {"status": "healthy", "app": settings.APP_NAME}
 
@@ -169,7 +171,7 @@ app.include_router(realtime_routes.router, prefix="/api/realtime", tags=["Realti
 app.include_router(safety_routes.router, prefix="/api/v2/safety", tags=["Safety"])
 app.include_router(geo_routes.router, prefix="/api/v2/geo", tags=["Geo"])
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 async def root():
     return {
         "message": "Welcome to JK Taxi API",

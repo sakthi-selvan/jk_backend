@@ -22,3 +22,8 @@ htmlcov/
 *.sql.gz
 *.log
 uploads/
+
+# Workspace PostgreSQL runtime and database
+.local/
+.neon
+node_modules/

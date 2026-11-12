@@ -19,6 +19,9 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_URL: str
+    # Neon supplies this direct endpoint for Alembic and startup schema work.
+    # Application requests continue to use the pooled DATABASE_URL endpoint.
+    DATABASE_URL_UNPOOLED: Optional[str] = None
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"

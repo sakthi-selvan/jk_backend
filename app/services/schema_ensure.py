@@ -6,7 +6,7 @@ from typing import Any
 
 from sqlalchemy import text
 
-from app.db.database import engine
+from app.db.database import engine, schema_engine
 
 # Hardcoded defaults used ONLY when a category row is missing.
 # After insert, admin edits in DB win — startup never overwrites prices.
@@ -226,7 +226,7 @@ def ensure_runtime_columns() -> None:
         """,
     ]
     try:
-        with engine.begin() as conn:
+        with schema_engine.begin() as conn:
             for sql in statements:
                 conn.execute(text(sql))
     except Exception as exc:
