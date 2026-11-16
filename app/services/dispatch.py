@@ -242,7 +242,13 @@ def begin_dispatch(ride: RideEnhanced) -> None:
 def lock_pending_ride(db: Session, ride_id: UUID) -> Optional[RideEnhanced]:
     """
     Lock a still-pending, unassigned ride for exclusive offer mutation.
-    Returns None if the ride was accepted/cancelled concurrently.
+    Returns None if the ride was accepted/cancelled concurrently, or if another
+    request/sweep currently holds the row lock (SKIP LOCKED).
+
+    SKIP LOCKED matters: these helpers run synchronously on the asyncio event loop.
+    A plain FOR UPDATE that waits on a lock held by a suspended coroutine blocks the
+    whole loop, so the lock holder can never resume -> server freezes until Neon
+    kills the idle transaction (~5 min).
     """
     return (
         db.query(RideEnhanced)
@@ -251,7 +257,7 @@ def lock_pending_ride(db: Session, ride_id: UUID) -> Optional[RideEnhanced]:
             RideEnhanced.status == "pending",
             RideEnhanced.driver_id.is_(None),
         )
-        .with_for_update()
+        .with_for_update(skip_locked=True)
         .first()
     )
 
@@ -475,13 +481,14 @@ async def advance_timed_out_offers(db: Session) -> list[dict]:
         else:
             events.append({"type": "waiting_drivers", "ride_id": str(ride.id)})
 
-    if events:
-        db.commit()
-        for ev in events:
-            if ev.get("type") == "ride_offer" and ev.get("ride"):
-                db.refresh(ev["ride"])
-            if ev.get("type") == "ride_cancelled" and ev.get("ride"):
-                db.refresh(ev["ride"])
+    # Always end the transaction so FOR UPDATE row locks are released before the
+    # caller awaits anything (holding them across an await deadlocks the loop).
+    db.commit()
+    for ev in events:
+        if ev.get("type") == "ride_offer" and ev.get("ride"):
+            db.refresh(ev["ride"])
+        if ev.get("type") == "ride_cancelled" and ev.get("ride"):
+            db.refresh(ev["ride"])
     return events
 
 
@@ -509,11 +516,10 @@ def assign_waiting_rides(db: Session) -> list[dict]:
         if assigned:
             ride, driver = assigned
             events.append({"type": "ride_offer", "ride": ride, "driver": driver})
-    if events:
-        db.commit()
-        for ev in events:
-            if ev.get("ride"):
-                db.refresh(ev["ride"])
+    db.commit()  # release row locks even when nothing was assigned
+    for ev in events:
+        if ev.get("ride"):
+            db.refresh(ev["ride"])
     return events
 
 
@@ -601,10 +607,9 @@ def expire_stale_pending_rides(db: Session) -> list[RideEnhanced]:
         ride.offer_started_at = None
         expired.append(ride)
 
-    if expired:
-        db.commit()
-        for ride in expired:
-            db.refresh(ride)
+    db.commit()  # release row locks even when nothing expired
+    for ride in expired:
+        db.refresh(ride)
     return expired
 
 
@@ -652,11 +657,10 @@ async def release_driver_exclusive_offers(db: Session, driver_id: UUID) -> list[
             )
             events.append({"type": "ride_cancelled", "ride": ride})
 
-    if events:
-        db.commit()
-        for ev in events:
-            if ev.get("type") in ("ride_offer", "ride_cancelled") and ev.get("ride"):
-                db.refresh(ev["ride"])
+    db.commit()  # release row locks even when nothing changed
+    for ev in events:
+        if ev.get("type") in ("ride_offer", "ride_cancelled") and ev.get("ride"):
+            db.refresh(ev["ride"])
     return events
 
 

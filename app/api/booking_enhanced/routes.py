@@ -363,6 +363,8 @@ async def create_booking_enhanced(
             db.refresh(ride)
             await emit_ride_offer(ride, offered)
             return enrich_ride_with_driver(ride, db)
+        # No driver offered: release the FOR UPDATE lock before the response is sent.
+        db.commit()
 
     return enrich_ride_with_driver(new_ride, db)
 
