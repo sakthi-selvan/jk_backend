@@ -56,19 +56,24 @@ def driver_location_fresh(driver: Driver) -> bool:
     return age <= settings.STALE_GPS_SECONDS
 
 
+# Cars can serve their own class or any smaller one ("bigger can take smaller"),
+# so a customer never gets a smaller car than they booked. Bikes and autos only
+# serve their own category.
+CAR_TIER: dict[str, int] = {"mini": 1, "sedan": 2, "suv": 3}
+
+
 def vehicle_matches(driver: Driver, vehicle_category: str) -> bool:
     if not settings.ENFORCE_VEHICLE_MATCH:
         return True
     cat = (vehicle_category or "").lower().strip()
-    dtype = (driver.vehicle_type or "").lower().strip().replace(" ", "_").replace("-", "_")
-    if not dtype:
+    if not (driver.vehicle_type or "").strip():
         return False
-    allowed = CATEGORY_MATCH.get(cat)
-    if not allowed:
-        return True
-    if dtype in allowed:
-        return True
-    return any(token in dtype for token in allowed)
+    if cat not in CATEGORY_MATCH:
+        return True  # unknown/custom booking category: any vehicle may serve it
+    driver_cat = normalize_driver_category(driver.vehicle_type)
+    if cat in CAR_TIER:
+        return driver_cat in CAR_TIER and CAR_TIER[driver_cat] >= CAR_TIER[cat]
+    return driver_cat == cat
 
 
 def normalize_driver_category(vehicle_type: Optional[str]) -> str:
