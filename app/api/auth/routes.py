@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from app.core.dependencies import get_db, get_current_user, get_current_driver_allow_inactive
 from app.core.security import get_password_hash, verify_password, create_access_token, create_refresh_token, decode_token
@@ -377,7 +378,11 @@ async def login_driver(driver_data: DriverLogin, db: Session = Depends(get_db)):
 @router.post("/admin/login", response_model=Token)
 async def login_admin(admin_data: AdminLogin, db: Session = Depends(get_db)):
     """Admin login"""
-    admin = db.query(Admin).filter(Admin.username == admin_data.username).first()
+    # Accept either the username or the email in the "username" field.
+    login = (admin_data.username or "").strip()
+    admin = db.query(Admin).filter(
+        or_(Admin.username == login, func.lower(Admin.email) == login.lower())
+    ).first()
     if not admin:
         raise HTTPException(status_code=401, detail="Incorrect username or password")
 
